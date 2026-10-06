@@ -1,5 +1,5 @@
 ﻿ModbusTester.App
-
+1.0.0.0
 
 winexe
 C#
@@ -12,9 +12,9 @@ TRACE;DEBUG;NET;NET8_0;NETCOREAPP;WINDOWS;WINDOWS7_0;NET5_0_OR_GREATER;NET6_0_OR
 D:\lewis_ProJ\Temperature\src\ModbusTester.App\App.xaml
 11407045341
 
-6143058552
+8-1974770758
 200-1904017752
 MainWindow.xaml;
 
-False
+True
 
