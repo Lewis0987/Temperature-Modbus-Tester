@@ -13,6 +13,7 @@ namespace ModbusTester.App.Tests;
 /// Red borders are shown only for the active connection type; the inactive type keeps its values and
 /// its (hidden) errors, which reappear when switching back.
 /// </summary>
+[Collection(WpfUiCollection.Name)]
 public class ActiveTypeValidationTests
 {
     /// <summary>What WPF sees, i.e. whether the red border is drawn.</summary>

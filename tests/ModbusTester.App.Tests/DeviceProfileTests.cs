@@ -14,12 +14,15 @@ public class DeviceProfileViewModelTests
 {
     private static readonly ushort[] DocumentValues = [2534, 0, 4856, 0, 650, 0];
 
-    private static async Task<(MainViewModel Vm, FakeModbusTcpSlave Slave)> ReadAsync(ushort[] registers, string quantity = "6", DeviceProfile? profile = null, string defaultScale = "1")
+    /// <param name="address">Generic: start address. Profile: "up to" address (cumulative read; Quantity is not used).</param>
+    private static async Task<(MainViewModel Vm, FakeModbusTcpSlave Slave)> ReadAsync(ushort[] registers, string quantity = "6", DeviceProfile? profile = null,
+        string defaultScale = "1", string address = "1")
     {
         var slave = new FakeModbusTcpSlave { Registers = registers };
         var vm = new MainViewModel(null, TestVm.TempStore())
         {
-            IsTcp = true, HostText = "127.0.0.1", PortText = slave.Port.ToString(), QuantityText = quantity, DefaultScaleText = defaultScale,
+            IsTcp = true, HostText = "127.0.0.1", PortText = slave.Port.ToString(), StartAddressText = address, QuantityText = quantity,
+            DefaultScaleText = defaultScale,
         };
         if (profile is not null)
             vm.SelectedDeviceProfile = profile;
@@ -75,7 +78,7 @@ public class DeviceProfileViewModelTests
     [Fact]
     public async Task Profile_DecodesRegisters1To6()
     {
-        var (vm, slave) = await ReadAsync(DocumentValues, profile: A6V12258321Profile.Profile, defaultScale: "0.01");
+        var (vm, slave) = await ReadAsync(DocumentValues, profile: A6V12258321Profile.Profile, defaultScale: "0.01", address: "6");
         await using var _ = slave;
         await using var __ = vm;
 
@@ -89,10 +92,12 @@ public class DeviceProfileViewModelTests
     [Fact]
     public async Task Profile_ScaleCannotBeChanged_ApplyToAllOnlyTouchesUndefinedRegisters()
     {
-        // Registers 1..8: 1–6 defined by the profile, 7–8 generic
-        var (vm, slave) = await ReadAsync([.. DocumentValues, 100, 200], quantity: "8", profile: A6V12258321Profile.Profile);
+        // A Generic read of registers 1..8 shown with the profile: 1–6 are defined, 7–8 stay generic.
+        // (A profile read itself never requests undefined registers.)
+        var (vm, slave) = await ReadAsync([.. DocumentValues, 100, 200], quantity: "8");
         await using var _ = slave;
         await using var __ = vm;
+        vm.SelectedDeviceProfile = A6V12258321Profile.Profile;
 
         Assert.Equal([false, false, false, false, false, false, true, true], vm.Rows.Select(r => r.IsScaleEditable));
         vm.Rows[0].ScaleText = "1";
@@ -129,7 +134,7 @@ public class DeviceProfileViewModelTests
     [Fact]
     public async Task OutOfRange_ReadStillPass_ConnectionNotError_NoFailLog()
     {
-        var (vm, slave) = await ReadAsync([2534, 0, 52312, 0, 57005, 0], profile: A6V12258321Profile.Profile);
+        var (vm, slave) = await ReadAsync([2534, 0, 52312, 0, 57005, 0], profile: A6V12258321Profile.Profile, address: "6");
         await using var _ = slave;
         await using var __ = vm;
 
@@ -142,10 +147,93 @@ public class DeviceProfileViewModelTests
         Assert.Equal(52312, vm.Rows[2].Raw);
     }
 
+    // ===================== Phase 3B: offsets 223–225 =====================
+
+    /// <summary>Slave with registers 1–6 (document values) and 223–225 (offsets 15, -25, 150).</summary>
+    private static ushort[] DeviceMap()
+    {
+        var registers = new ushort[225];
+        DocumentValues.CopyTo(registers, 0);
+        registers[222] = 15;
+        registers[223] = unchecked((ushort)(short)-25);
+        registers[224] = 150;
+        return registers;
+    }
+
+    /// <param name="address">Profile: "up to" address. Generic: start address 223 with Quantity 3.</param>
+    private static async Task<(MainViewModel Vm, FakeModbusTcpSlave Slave)> ReadOffsetsAsync(DeviceProfile profile, string defaultScale, string address = "225")
+    {
+        var slave = new FakeModbusTcpSlave { Registers = DeviceMap() };
+        var vm = new MainViewModel(null, TestVm.TempStore())
+        {
+            IsTcp = true, HostText = "127.0.0.1", PortText = slave.Port.ToString(),
+            StartAddressText = profile.IsGeneric ? "223" : address, QuantityText = "3", DefaultScaleText = defaultScale,
+            SelectedDeviceProfile = profile,
+        };
+        await vm.ConnectCommand.ExecuteAsync(null);
+        await vm.ReadCommand.ExecuteAsync(null);
+        Assert.True(vm.LastResultPassed);
+        return (vm, slave);
+    }
+
+    // Tests 9 + 10: Address 225 → registers 1–6 and 223–225, merged and ascending
+    [Fact]
+    public async Task Profile_Address225_ShowsRegisters1To6And223To225()
+    {
+        var (vm, slave) = await ReadOffsetsAsync(A6V12258321Profile.Profile, "0.01");
+        await using var _ = slave;
+        await using var __ = vm;
+
+        Assert.Equal([1, 2, 3, 4, 5, 6, 223, 224, 225], vm.Rows.Select(r => r.Address));
+        RegisterRowViewModel[] offsets = [.. vm.Rows.Skip(6)];
+        Assert.Equal(["Temperature offset", "Relative humidity offset", "CO2 offset"], offsets.Select(r => r.Description));
+        Assert.Equal(["0.1", "0.1", "1"], offsets.Select(r => r.ScaleText));
+        Assert.Equal(["1.5", "-2.5", "150"], offsets.Select(r => r.ValueText));
+        Assert.Equal(["°C", "%", "ppm"], offsets.Select(r => r.Unit));
+        Assert.Equal([15L, -25L, 150L], offsets.Select(r => r.Decimal));
+        Assert.Equal(["25.34", "No error", "48.56", "No error", "650", "No error"], vm.Rows.Take(6).Select(r => r.ValueText));
+        Assert.Contains(vm.LogEntries, e => e.Message.Contains("Address = 223 (PDU 0x00DE, 1-based)  Quantity = 3"));
+    }
+
+    // Test 15
+    [Fact]
+    public async Task Profile_Offsets_ScaleNotOverriddenByApplyToAllRows()
+    {
+        var (vm, slave) = await ReadOffsetsAsync(A6V12258321Profile.Profile, "0.01");
+        await using var _ = slave;
+        await using var __ = vm;
+
+        vm.DefaultScaleText = "5";
+        vm.ApplyDefaultScaleCommand.Execute(null);
+        vm.Rows[6].ScaleText = "2";
+
+        Assert.All(vm.Rows, r => Assert.False(r.IsScaleEditable));
+        Assert.Equal(["0.01", "-", "0.01", "-", "-", "-", "0.1", "0.1", "1"], vm.Rows.Select(r => r.ScaleText));
+        Assert.Equal(["1.5", "-2.5", "150"], vm.Rows.Skip(6).Select(r => r.ValueText));
+    }
+
+    // Test 14
+    [Fact]
+    public async Task Generic_Address223_IsNotTemperatureOffset_UsesManualScale()
+    {
+        var (vm, slave) = await ReadOffsetsAsync(DeviceProfile.Generic, "0.01");
+        await using var _ = slave;
+        await using var __ = vm;
+
+        Assert.All(vm.Rows, r => Assert.Equal("", r.Description));
+        Assert.All(vm.Rows, r => Assert.True(r.IsScaleEditable));
+        Assert.Equal(["0.01", "0.01", "0.01"], vm.Rows.Select(r => r.ScaleText));
+        Assert.Equal(["0.15", "655.11", "1.5"], vm.Rows.Select(r => r.ValueText));   // unsigned raw × manual scale
+
+        vm.DefaultScaleText = "1";
+        vm.ApplyDefaultScaleCommand.Execute(null);
+        Assert.Equal(["15", "65511", "150"], vm.Rows.Select(r => r.ValueText));
+    }
+
     [Fact]
     public async Task NegativeTemperature_ShowsSignedDecimal()
     {
-        var (vm, slave) = await ReadAsync([unchecked((ushort)(short)-1234), 0, 4856, 0, 650, 0], profile: A6V12258321Profile.Profile);
+        var (vm, slave) = await ReadAsync([unchecked((ushort)(short)-1234), 0, 4856, 0, 650, 0], profile: A6V12258321Profile.Profile, address: "6");
         await using var _ = slave;
         await using var __ = vm;
 
@@ -156,6 +244,7 @@ public class DeviceProfileViewModelTests
 }
 
 /// <summary>The real DataGrid: profile-defined Scale cells refuse to enter edit mode; generic ones still edit.</summary>
+[Collection(WpfUiCollection.Name)]
 public class DeviceProfileGridUiTests
 {
     private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject
@@ -181,7 +270,6 @@ public class DeviceProfileGridUiTests
             var vm = new MainViewModel(null, TestVm.TempStore())
             {
                 IsTcp = true, HostText = "127.0.0.1", PortText = slave.Port.ToString(), QuantityText = "7",
-                SelectedDeviceProfile = A6V12258321Profile.Profile,
             };
             var window = new MainWindow { Left = -20000, Top = -20000, ShowActivated = false, DataContext = vm };
             window.Show();
@@ -197,9 +285,18 @@ public class DeviceProfileGridUiTests
                 // Clean-up is awaited inside the frame: continuations need this dispatcher to still be pumping.
                 await using var _ = slave;
                 await using var __ = vm;
+                TextBox quantityBox = All<TextBox>(window).Single(t =>
+                    t.GetBindingExpression(TextBox.TextProperty)?.ParentBinding.Path.Path == nameof(MainViewModel.QuantityText));
+                Label quantityLabel = All<Label>(window).Single(l => (l.Content as string) == "Quantity");
+                Assert.True(quantityBox.IsVisible);                       // Test 15: Generic shows Quantity
+
+                // Generic read of registers 1..7, then shown with the profile: 1–6 defined, 7 generic.
                 await vm.ConnectCommand.ExecuteAsync(null);
                 await vm.ReadCommand.ExecuteAsync(null);
+                vm.SelectedDeviceProfile = A6V12258321Profile.Profile;
                 await Task.Delay(200);
+                Assert.False(quantityBox.IsVisible);                      // Test 14: profile hides Quantity
+                Assert.Equal(Visibility.Collapsed, quantityLabel.Visibility);
                 DataGrid grid = All<DataGrid>(window).Single();
                 Assert.Equal(["Address", "Description", "Raw", "Decimal", "HEX", "Binary", "Scale", "Value", "Unit"],
                     grid.Columns.Select(c => (string)c.Header));
@@ -217,6 +314,11 @@ public class DeviceProfileGridUiTests
                 await Task.Delay(100);
                 Assert.Equal("50", vm.Rows[6].ValueText);
                 Assert.Equal("25.34", vm.Rows[0].ValueText);
+
+                vm.SelectedDeviceProfile = DeviceProfile.Generic;
+                await Task.Delay(100);
+                Assert.True(quantityBox.IsVisible);
+                Assert.Equal(Visibility.Visible, quantityLabel.Visibility);
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

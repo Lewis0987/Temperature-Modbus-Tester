@@ -1,3 +1,5 @@
+using ModbusTester.Core.Models;
+
 namespace ModbusTester.Core.Profiles;
 
 /// <summary>
@@ -8,11 +10,13 @@ public sealed class DeviceProfile
 {
     private readonly Dictionary<ushort, RegisterDefinition> _byPduAddress;
 
-    public DeviceProfile(string name, string description, IEnumerable<RegisterDefinition> registers)
+    /// <param name="requiredReadFunction">Read function the device document prescribes for its register table; null = any.</param>
+    public DeviceProfile(string name, string description, IEnumerable<RegisterDefinition> registers, ModbusFunction? requiredReadFunction = null)
     {
         Name = name;
         Description = description;
         Registers = registers.OrderBy(r => r.RegisterNumber).ToArray();
+        RequiredReadFunction = requiredReadFunction;
         _byPduAddress = Registers.ToDictionary(r => r.PduAddress);
     }
 
@@ -20,6 +24,12 @@ public sealed class DeviceProfile
     public string Description { get; }
     public IReadOnlyList<RegisterDefinition> Registers { get; }
     public bool IsGeneric => Registers.Count == 0;
+
+    /// <summary>
+    /// The read function the document prescribes (e.g. FC03 for a "Holding Register" table), or null when the user may
+    /// choose (Generic). A device that happens to answer another function does not change what the document says.
+    /// </summary>
+    public ModbusFunction? RequiredReadFunction { get; }
 
     /// <summary>The definition for a 0-based PDU address (Register N = PDU N - 1), or null if the profile does not define it.</summary>
     public RegisterDefinition? Find(ushort pduAddress) => _byPduAddress.GetValueOrDefault(pduAddress);

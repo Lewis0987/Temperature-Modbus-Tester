@@ -11,6 +11,7 @@
     </Window.DataContext>
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <!-- Invalid input: WPF's default error template draws the red border (driven by INotifyDataErrorInfo);
              the tooltip shows why. Both clear as soon as the text becomes valid. -->
         <Style TargetType="TextBox">
@@ -176,51 +177,71 @@
 
         <!-- ===== Request ===== -->
         <GroupBox Grid.Row="1" Header="Register Read" IsEnabled="{Binding HasConnectionType}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="250" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="80" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="80" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="60" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+            <!-- Two independent rows; SharedSizeGroup keeps the label/field columns of both rows aligned.
+                 Row 1's Quantity columns are Auto, so when Quantity is collapsed (device profile) Read moves left. -->
+            <Grid Grid.IsSharedSizeScope="True">
                 <Grid.RowDefinitions>
                     <RowDefinition />
                     <RowDefinition />
                 </Grid.RowDefinitions>
 
-                <Label Content="Function" />
-                <ComboBox Grid.Column="1" ItemsSource="{Binding Functions}" SelectedItem="{Binding SelectedFunction}" />
-                <Label Grid.Column="2" Content="Address" />
-                <controls:HistoryField Grid.Column="3" History="{Binding AddressHistory}">
-                    <TextBox Text="{Binding StartAddressText, UpdateSourceTrigger=PropertyChanged}" />
-                </controls:HistoryField>
-                <Label Grid.Column="4" Content="Quantity" />
-                <controls:HistoryField Grid.Column="5" History="{Binding QuantityHistory}">
-                    <TextBox Text="{Binding QuantityText, UpdateSourceTrigger=PropertyChanged}" />
-                </controls:HistoryField>
-                <Button Grid.Column="6" Grid.ColumnSpan="3" Content="Read" HorizontalAlignment="Left" FontWeight="SemiBold"
-                        Command="{Binding ReadCommand}" IsDefault="True" />
+                <Grid x:Name="ReadRow">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="RrLabel1" />
+                        <ColumnDefinition Width="250" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="RrLabel2" />
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Label Content="Function" />
+                    <!-- A device profile that prescribes the function (A6V12258321: FC03) fixes and disables it. -->
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding Functions}" SelectedItem="{Binding SelectedFunction}"
+                              IsEnabled="{Binding IsFunctionSelectable}" />
+                    <Label Grid.Column="2" Content="Address"
+                           ToolTip="Generic Modbus: start address (with Quantity). Device profile: read every register the profile defines up to this address." />
+                    <controls:HistoryField Grid.Column="3" History="{Binding AddressHistory}">
+                        <TextBox Text="{Binding StartAddressText, UpdateSourceTrigger=PropertyChanged}" />
+                    </controls:HistoryField>
+                    <!-- Quantity is a Generic Modbus input only; a device profile decides which registers to read. -->
+                    <Label Grid.Column="4" Content="Quantity"
+                           Visibility="{Binding IsGenericProfile, Converter={StaticResource BoolToVisibility}}" />
+                    <controls:HistoryField Grid.Column="5" Width="80" History="{Binding QuantityHistory}"
+                                           Visibility="{Binding IsGenericProfile, Converter={StaticResource BoolToVisibility}}">
+                        <TextBox Text="{Binding QuantityText, UpdateSourceTrigger=PropertyChanged}" />
+                    </controls:HistoryField>
+                    <Button Grid.Column="6" Content="Read" FontWeight="SemiBold" Command="{Binding ReadCommand}" IsDefault="True" />
+                </Grid>
 
-                <Label Grid.Row="1" Content="Address Base" />
-                <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AddressBases}" SelectedItem="{Binding SelectedAddressBase}" />
-                <Label Grid.Row="1" Grid.Column="2" Content="Default Scale"
-                       ToolTip="Scale for registers that have no scale of their own yet (registers defined by the device profile always use the document scale)." />
-                <controls:HistoryField Grid.Row="1" Grid.Column="3" History="{Binding DefaultScaleHistory}">
-                    <TextBox Text="{Binding DefaultScaleText, UpdateSourceTrigger=PropertyChanged}" />
-                </controls:HistoryField>
-                <Button Grid.Row="1" Grid.Column="4" Grid.ColumnSpan="2" Content="Apply to all rows" Command="{Binding ApplyDefaultScaleCommand}"
-                        ToolTip="Overwrite the Scale of every manually scaled row with Default Scale (rows defined by the device profile are not changed)." />
-                <!-- No PASS/FAIL text here: every result (PASS, response time, failure reason) is in the Communication Log. -->
-                <Label Grid.Row="1" Grid.Column="6" Content="Device Profile"
-                       ToolTip="Generic Modbus: raw value × manual scale. A device profile decodes the registers it defines from the device document." />
-                <ComboBox Grid.Row="1" Grid.Column="7" Grid.ColumnSpan="2" Width="220" HorizontalAlignment="Left"
-                          ItemsSource="{Binding DeviceProfiles}" SelectedItem="{Binding SelectedDeviceProfile}"
-                          DisplayMemberPath="Name" ToolTip="{Binding SelectedDeviceProfile.Description}" />
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="RrLabel1" />
+                        <ColumnDefinition Width="250" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="RrLabel2" />
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Label Content="Address Base" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AddressBases}" SelectedItem="{Binding SelectedAddressBase}" />
+                    <Label Grid.Column="2" Content="Default Scale"
+                           ToolTip="Scale for registers that have no scale of their own yet (registers defined by the device profile always use the document scale)." />
+                    <controls:HistoryField Grid.Column="3" History="{Binding DefaultScaleHistory}">
+                        <TextBox Text="{Binding DefaultScaleText, UpdateSourceTrigger=PropertyChanged}" />
+                    </controls:HistoryField>
+                    <Button Grid.Column="4" Content="Apply to all rows" Command="{Binding ApplyDefaultScaleCommand}"
+                            ToolTip="Overwrite the Scale of every manually scaled row with Default Scale (rows defined by the device profile are not changed)." />
+                    <!-- No PASS/FAIL text here: every result (PASS, response time, failure reason) is in the Communication Log. -->
+                    <Label Grid.Column="5" Content="Device Profile"
+                           ToolTip="Generic Modbus: raw value × manual scale. A device profile decodes the registers it defines from the device document." />
+                    <ComboBox Grid.Column="6" Width="220"
+                              ItemsSource="{Binding DeviceProfiles}" SelectedItem="{Binding SelectedDeviceProfile}"
+                              DisplayMemberPath="Name" ToolTip="{Binding SelectedDeviceProfile.Description}" />
+                </Grid>
             </Grid>
         </GroupBox>
 

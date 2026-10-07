@@ -542,6 +542,7 @@ public class InputHistoryViewModelTests
 }
 
 /// <summary>Through the real MainWindow: ▼ visibility, popup clicks, and which areas are enabled.</summary>
+[Collection(WpfUiCollection.Name)]
 public class InputHistoryUiTests
 {
     private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject

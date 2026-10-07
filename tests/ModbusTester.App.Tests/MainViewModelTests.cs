@@ -9,6 +9,7 @@ using ModbusTester.Core.Models;
 namespace ModbusTester.App.Tests;
 
 /// <summary>ViewModel behaviour without a window: validation, the Connect gate and connection-type switching.</summary>
+[Collection(WpfUiCollection.Name)]
 public class MainViewModelTests
 {
     private static bool HasError(MainViewModel vm, string property) => vm.GetErrors(property).Cast<object>().Any();

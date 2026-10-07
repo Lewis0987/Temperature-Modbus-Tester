@@ -30,6 +30,10 @@ public static class RegisterService
     /// The definition is looked up by PDU address (request PDU address + offset), so the Address Base the user
     /// chose has already been applied exactly once, by <see cref="ModbusRequest.PduAddress"/>.
     /// </summary>
+    /// <summary>Decodes several reads (e.g. the groups of a profile cumulative read) into one list, ascending by register.</summary>
+    public static IReadOnlyList<DecodedRegister> Decode(IEnumerable<ModbusResult> results, DeviceProfile profile, Func<int, double> manualScaleFor) =>
+        results.SelectMany(r => Decode(r, profile, manualScaleFor)).OrderBy(r => r.PduAddress).ToArray();
+
     /// <param name="manualScaleFor">Scale for registers without a definition, by user-facing address.</param>
     public static IReadOnlyList<DecodedRegister> Decode(ModbusResult result, DeviceProfile profile, Func<int, double> manualScaleFor)
     {

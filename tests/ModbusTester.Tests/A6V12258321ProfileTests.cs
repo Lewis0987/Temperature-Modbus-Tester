@@ -23,12 +23,13 @@ public class A6V12258321ProfileTests
     };
 
     [Fact]
-    public void Profile_DefinesRegisters1To6_ByDocumentRegisterNumber()
+    public void Profile_DefinesRegisters_ByDocumentRegisterNumber()
     {
-        Assert.Equal([1, 2, 3, 4, 5, 6], Profile.Registers.Select(r => r.RegisterNumber));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 223, 224, 225], Profile.Registers.Select(r => r.RegisterNumber));
         Assert.Equal("Temperature value", Profile.Find(0)!.Description);   // Register 1 = PDU 0
         Assert.Null(Profile.Find(6));                                 // Register 7 is not defined
-        Assert.All(Profile.Registers, r => Assert.Equal(RegisterAccess.Read, r.Access));
+        Assert.All(Profile.Registers.Where(r => r.Group == A6V12258321Profile.Measurement),
+            r => Assert.Equal(RegisterAccess.Read, r.Access));
         Assert.Same(DeviceProfile.Generic, DeviceProfile.All[0]);
         Assert.True(DeviceProfile.Generic.IsGeneric);
     }
@@ -197,6 +198,164 @@ public class A6V12258321ProfileTests
         Assert.Equal(fromTcp, fromRtu);
         Assert.Equal(["25.34", "No error", "523.12 (Out of range)", "Bad reliability, unavailable", "57005 (Out of range)", "Unknown (5)"],
             fromTcp.Select(r => r.DisplayValue));
+    }
+
+    // ===================== Phase 3B: offset registers 223–225 =====================
+
+    // Test 12: metadata straight from the document
+    [Theory]
+    [InlineData(223, "Temperature offset", 0.1, "°C", -100, 100)]
+    [InlineData(224, "Relative humidity offset", 0.1, "%", -100, 100)]
+    [InlineData(225, "CO2 offset", 1.0, "ppm", -2000, 2000)]
+    public void Offsets_Definition_MatchesDocument(int register, string description, double scale, string unit, double min, double max)
+    {
+        RegisterDefinition d = Profile.Find((ushort)(register - 1))!;
+        Assert.Equal(register, d.RegisterNumber);
+        Assert.Equal(description, d.Description);
+        Assert.Equal(DataType.Int16, d.DataType);
+        Assert.Equal(scale, d.Scale);
+        Assert.Equal(unit, d.Unit);
+        Assert.Equal((min, max), (d.Min!.Value, d.Max!.Value));
+        Assert.Equal(RegisterAccess.ReadWrite, d.Access);
+        Assert.True(d.IsWritable);
+        Assert.Equal(0, d.DefaultValue);
+        Assert.Equal(A6V12258321Profile.Offset, d.Group);
+    }
+
+    [Fact]
+    public void MeasurementRegisters_AreReadOnly_WithoutDefault()
+    {
+        Assert.All(Profile.Registers.Where(r => r.RegisterNumber <= 6), r =>
+        {
+            Assert.False(r.IsWritable);
+            Assert.Null(r.DefaultValue);
+        });
+    }
+
+    // Tests 1–6: signed Int16 × scale (negative values arrive as two's complement)
+    [Theory]
+    [InlineData(223, 15, 15, "1.5", "°C")]
+    [InlineData(223, 0xFFF1, -15, "-1.5", "°C")]
+    [InlineData(224, 25, 25, "2.5", "%")]
+    [InlineData(224, 0xFFE7, -25, "-2.5", "%")]
+    [InlineData(225, 150, 150, "150", "ppm")]
+    [InlineData(225, 0xFF6A, -150, "-150", "ppm")]
+    [InlineData(223, 0, 0, "0", "°C")]   // document default
+    public void Offsets_DecodeSignedAndScaled(int register, int raw, long integer, string value, string unit)
+    {
+        DecodedRegister r = Decode(register, (ushort)raw);
+        Assert.Equal((ushort)raw, r.Raw);
+        Assert.Equal(integer, r.Integer);
+        Assert.Equal(value, r.ValueText);
+        Assert.Equal(unit, r.Unit);
+        Assert.Equal(RegisterQuality.Ok, r.Quality);
+    }
+
+    [Fact]
+    public void Reg223_0xFFF1_IsMinus1_5_NotHugePositive()
+    {
+        DecodedRegister r = Decode(223, 0xFFF1);
+        Assert.Equal(65521, r.Raw);
+        Assert.Equal(-1.5, r.Value);
+        Assert.NotEqual(6552.1, r.Value);
+    }
+
+    [Theory]
+    [InlineData(223, "0.1")]
+    [InlineData(224, "0.1")]
+    [InlineData(225, "1")]     // document 1.0 → shown "1"; register 5 (Scaling "-") stays "-"
+    public void Offsets_ScaleText(int register, string scaleText)
+    {
+        Assert.Equal(scaleText, Decode(register, 1).ScaleText);
+        Assert.Equal("-", Decode(5, 650).ScaleText);
+    }
+
+    // Tests 7–11: range validation, edges included
+    [Theory]
+    [InlineData(223, 1000, RegisterQuality.Ok)]          //  100.0 °C
+    [InlineData(223, -1000, RegisterQuality.Ok)]         // -100.0 °C
+    [InlineData(223, 1200, RegisterQuality.OutOfRange)]  //  120.0 °C
+    [InlineData(223, 1001, RegisterQuality.OutOfRange)]  //  100.1 °C
+    [InlineData(223, -1001, RegisterQuality.OutOfRange)] // -100.1 °C
+    [InlineData(224, 1001, RegisterQuality.OutOfRange)]  //  100.1 %
+    [InlineData(224, -1000, RegisterQuality.Ok)]
+    [InlineData(225, 2000, RegisterQuality.Ok)]
+    [InlineData(225, 2001, RegisterQuality.OutOfRange)]
+    [InlineData(225, -2001, RegisterQuality.OutOfRange)]
+    [InlineData(225, -2000, RegisterQuality.Ok)]
+    public void Offsets_RangeValidation(int register, short integer, RegisterQuality expected)
+    {
+        DecodedRegister r = Decode(register, unchecked((ushort)integer));
+        Assert.Equal(expected, r.Quality);
+        if (expected == RegisterQuality.OutOfRange)
+            Assert.EndsWith("(Out of range)", r.DisplayValue);
+    }
+
+    // Test 13: Register 223 (1-based) → PDU 222 / 0x00DE, converted once; the profile finds 223–225
+    [Fact]
+    public async Task Address223_OneBased_SendsPdu0x00DE_AndDecodesOffsets()
+    {
+        var registers = new ushort[225];
+        registers[222] = 15;
+        registers[223] = unchecked((ushort)(short)-25);
+        registers[224] = 150;
+        await using var slave = new FakeModbusTcpSlave { Registers = registers };
+        await using var service = new ModbusService(new CommunicationLogger());
+        Assert.True(await service.ConnectAsync(new ModbusTcpTransport(new TcpSettings("127.0.0.1", slave.Port))));
+        var request = new ModbusRequest(ModbusFunction.ReadHoldingRegisters, 1, 223, 3, AddressBase.OneBased);
+
+        ModbusResult result = await service.ReadRegistersAsync(request);
+
+        Assert.Equal(222, request.PduAddress);
+        Assert.Equal("03 00 DE 00 03", HexFormatter.Format(slave.ReceivedAdus.Single()[7..]));
+        Assert.Contains(service.Logger.Entries, e => e.Message.Contains("Address = 223 (PDU 0x00DE, 1-based)"));
+        IReadOnlyList<DecodedRegister> rows = RegisterService.Decode(result, Profile, _ => 0.01);
+        Assert.Equal([223, 224, 225], rows.Select(r => r.Address));
+        Assert.Equal([222, 223, 224], rows.Select(r => (int)r.PduAddress));
+        Assert.Equal(["Temperature offset", "Relative humidity offset", "CO2 offset"], rows.Select(r => r.Description));
+        Assert.Equal(["0.1", "0.1", "1"], rows.Select(r => r.ScaleText));
+        Assert.Equal(["1.5", "-2.5", "150"], rows.Select(r => r.ValueText));
+        Assert.Equal(["°C", "%", "ppm"], rows.Select(r => r.Unit));
+    }
+
+    [Fact]
+    public void Address222_ZeroBased_IsTheSameRegister223()
+    {
+        ModbusResult result = Result(222, AddressBase.ZeroBased, 15);
+        DecodedRegister r = RegisterService.Decode(result, Profile, _ => 1).Single();
+        Assert.Equal("Temperature offset", r.Description);
+        Assert.Equal(222, r.Address);   // user-facing address stays as entered
+    }
+
+    // Test 14 (Core level): Generic never uses the profile's meaning for 223
+    [Fact]
+    public void Generic_Address223_UsesManualScale()
+    {
+        ModbusResult result = Result(223, AddressBase.OneBased, 15, 0xFFE7, 150);
+
+        IReadOnlyList<DecodedRegister> rows = RegisterService.Decode(result, DeviceProfile.Generic, _ => 0.01);
+
+        Assert.All(rows, r => Assert.False(r.IsProfileControlled));
+        Assert.All(rows, r => Assert.Equal("", r.Description));
+        Assert.Equal(["0.15", "655.11", "1.5"], rows.Select(r => r.ValueText));   // unsigned raw × 0.01
+    }
+
+    // Out-of-range offsets read over the wire: still a successful read
+    [Fact]
+    public async Task OutOfRangeOffset_ReadStillPass()
+    {
+        var registers = new ushort[225];
+        registers[222] = 1200;   // 120.0 °C
+        await using var slave = new FakeModbusTcpSlave { Registers = registers };
+        await using var service = new ModbusService(new CommunicationLogger());
+        Assert.True(await service.ConnectAsync(new ModbusTcpTransport(new TcpSettings("127.0.0.1", slave.Port))));
+
+        ModbusResult result = await service.ReadRegistersAsync(new ModbusRequest(ModbusFunction.ReadHoldingRegisters, 1, 223, 1, AddressBase.OneBased));
+
+        Assert.Equal(ResultStatus.Pass, result.Status);
+        Assert.Equal(ConnectionState.Connected, service.State);
+        Assert.DoesNotContain(service.Logger.Entries, e => e.Kind == LogKind.Fail);
+        Assert.Equal("120 (Out of range)", RegisterService.Decode(result, Profile, _ => 1).Single().DisplayValue);
     }
 
     private static byte[] RtuResponse(byte slaveId, ushort[] registers)

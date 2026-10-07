@@ -15,6 +15,7 @@ namespace ModbusTester.App.Tests;
 /// The Register Read area shows no PASS / FAIL / response time anymore; the Communication Log keeps everything.
 /// Runs the real MainWindow on an STA thread with a Dispatcher so async Connect/Read behave as in the app.
 /// </summary>
+[Collection(WpfUiCollection.Name)]
 public class RegisterReadNoResultTextUiTests
 {
     private static readonly ushort[] Registers = [2534, 0, 4856, 0, 650, 0];

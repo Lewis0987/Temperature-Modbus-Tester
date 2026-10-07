@@ -38,6 +38,15 @@ public sealed record RegisterDefinition
 
     public RegisterAccess Access { get; init; } = RegisterAccess.Read;
 
+    /// <summary>Document default (engineering value), e.g. 0 for the offsets; null if the document gives none.
+    /// Kept for later write / reset features; not shown in the grid yet.</summary>
+    public double? DefaultValue { get; init; }
+
+    /// <summary>Document grouping, e.g. "Measurement" or "Offset".</summary>
+    public string Group { get; init; } = "";
+
+    public bool IsWritable => Access is RegisterAccess.Write or RegisterAccess.ReadWrite;
+
     /// <summary>For <see cref="DataType.Status"/>: raw value → meaning. Values not listed are reported as unknown.</summary>
     public IReadOnlyDictionary<ushort, RegisterState> States { get; init; } = new Dictionary<ushort, RegisterState>();
 

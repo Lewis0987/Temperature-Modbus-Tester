@@ -189,8 +189,14 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
 
     public bool IsGenericProfile => SelectedDeviceProfile.IsGeneric;
 
-    /// <summary>Last successful read and the Default Scale it used, so a profile change can re-decode without reading again.</summary>
-    private (ModbusResult Result, double DefaultScale)? _lastRead;
+    /// <summary>False when the profile prescribes the read function (the Function box is then fixed and disabled).</summary>
+    public bool IsFunctionSelectable => SelectedDeviceProfile.RequiredReadFunction is null;
+
+    /// <summary>The user's own Function choice, kept while a profile forces another one and restored afterwards.</summary>
+    private Option<ModbusFunction>? _userFunction;
+
+    /// <summary>Last successful read (one result per request) and the Default Scale it used, so a profile change can re-decode without reading again.</summary>
+    private (IReadOnlyList<ModbusResult> Results, double DefaultScale)? _lastRead;
 
     [ObservableProperty] private string _lastResult = "";
     [ObservableProperty] private bool _lastResultPassed;
@@ -292,8 +298,10 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         LastResultPassed = false;
     }
 
+    // Quantity only takes part in Generic reads; a device profile reads its defined registers "up to Address".
     private bool CanRead() => IsConnected && !IsBusy && ConnectionInputsValid
-        && !HasError(nameof(StartAddressText), nameof(QuantityText), nameof(DefaultScaleText));
+        && !HasError(nameof(StartAddressText), nameof(DefaultScaleText))
+        && (!IsGenericProfile || !HasError(nameof(QuantityText)));
 
     [RelayCommand(CanExecute = nameof(CanRead))]
     private async Task ReadAsync()
@@ -301,27 +309,37 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         // The connection type cannot change while connected, so IsTcp still describes the live transport.
         Parsed<int> id = ConnectionType == ViewModels.ConnectionType.Tcp ? InputValidator.UnitId(UnitIdText) : InputValidator.SlaveId(SlaveIdText);
         Parsed<int> address = InputValidator.Address(StartAddressText, SelectedAddressBase.Value);
-        Parsed<int> quantity = InputValidator.Quantity(QuantityText);
+        Parsed<int> quantity = IsGenericProfile ? InputValidator.Quantity(QuantityText) : new(0, null);
         Parsed<double> defaultScale = InputValidator.Scale(DefaultScaleText);
         if (!Gate(id, address, quantity, defaultScale))
             return;
 
-        var request = new ModbusRequest(SelectedFunction.Value, (byte)id.Value, address.Value, (ushort)quantity.Value, SelectedAddressBase.Value);
+        // Generic: one request "Address + Quantity". Profile: one request per run of consecutive defined registers.
+        IReadOnlyList<ModbusRequest> plan = IsGenericProfile
+            ? [new ModbusRequest(ReadFunction, (byte)id.Value, address.Value, (ushort)quantity.Value, SelectedAddressBase.Value)]
+            : ProfileReadPlanner.Plan(SelectedDeviceProfile, address.Value, SelectedAddressBase.Value, (byte)id.Value, ReadFunction);
+        if (plan.Count == 0)
+        {
+            _logger.Log(LogKind.Fail, $"Validation FAIL: {SelectedDeviceProfile.Name} defines no register up to Address {address.Value}.");
+            return;
+        }
 
         IsBusy = true;
         try
         {
-            ModbusResult result = await _service.ReadRegistersAsync(request, _operationCts.Token);
+            ProfileReadResult read = await ProfileReader.ReadAsync(_service, plan, _operationCts.Token);
             // Short verdict only; the full reason (status, message, CRC details...) is in the Communication Log.
-            LastResultPassed = result.IsSuccess;
-            LastResult = result.IsSuccess ? $"PASS   {result.ElapsedMs:F0} ms" : "FAIL";
+            // Any failed request makes the whole read FAIL; rows then keep showing the previous successful read.
+            LastResultPassed = read.IsSuccess;
+            LastResult = read.IsSuccess ? $"PASS   {read.ElapsedMs:F0} ms" : "FAIL";
 
-            if (result.IsSuccess)
+            if (read.IsSuccess)
             {
                 AddressHistory.Record(address.Value.ToString(CultureInfo.InvariantCulture));
-                QuantityHistory.Record(quantity.Value.ToString(CultureInfo.InvariantCulture));
+                if (IsGenericProfile)
+                    QuantityHistory.Record(quantity.Value.ToString(CultureInfo.InvariantCulture));
                 DefaultScaleHistory.Record(defaultScale.Value.ToString(CultureInfo.InvariantCulture));
-                _lastRead = (result, defaultScale.Value);
+                _lastRead = (read.Results, defaultScale.Value);
                 RebuildRows();
             }
         }
@@ -391,15 +409,35 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     private void RebuildRows()
     {
         Rows.Clear();
-        if (_lastRead is not var (result, defaultScale))
+        if (_lastRead is not var (results, defaultScale))
             return;
-        foreach (DecodedRegister register in RegisterService.Decode(result, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale)))
+        // Merged and sorted by register, whatever order the requests completed in.
+        foreach (DecodedRegister register in RegisterService.Decode(results, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale)))
             Rows.Add(new RegisterRowViewModel(register, (a, scale) => _scales[a] = scale));
     }
 
-    partial void OnSelectedDeviceProfileChanged(DeviceProfile value)
+    /// <summary>The function actually sent: the profile's prescribed one, otherwise the user's choice (final gate).</summary>
+    private ModbusFunction ReadFunction => SelectedDeviceProfile.RequiredReadFunction ?? SelectedFunction.Value;
+
+    partial void OnSelectedDeviceProfileChanged(DeviceProfile? oldValue, DeviceProfile newValue)
     {
+        // Driven by profile metadata only: a profile that prescribes a function fixes it; leaving it restores the
+        // user's previous choice (e.g. Generic FC04 → A6V12258321 FC03 → Generic FC04 again).
+        if (newValue.RequiredReadFunction is { } required)
+        {
+            if (oldValue?.RequiredReadFunction is null)
+                _userFunction = SelectedFunction;
+            SelectedFunction = Functions.Single(f => f.Value == required);
+        }
+        else if (_userFunction is not null)
+        {
+            SelectedFunction = _userFunction;
+            _userFunction = null;
+        }
+
         OnPropertyChanged(nameof(IsGenericProfile));
+        OnPropertyChanged(nameof(IsFunctionSelectable));
+        ReadCommand.NotifyCanExecuteChanged();
         RebuildRows();
     }
 
