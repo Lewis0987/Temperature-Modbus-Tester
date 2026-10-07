@@ -4,6 +4,7 @@
     <Project Path="src/ModbusTester.Core/ModbusTester.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ModbusTester.App.Tests/ModbusTester.App.Tests.csproj" />
     <Project Path="tests/ModbusTester.Tests/ModbusTester.Tests.csproj" />
   </Folder>
 </Solution>

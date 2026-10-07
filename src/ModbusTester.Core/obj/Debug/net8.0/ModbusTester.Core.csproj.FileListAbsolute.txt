@@ -9,3 +9,4 @@ D:\lewis_ProJ\Temperature\src\ModbusTester.Core\obj\Debug\net8.0\ModbusTester.Co
 D:\lewis_ProJ\Temperature\src\ModbusTester.Core\obj\Debug\net8.0\refint\ModbusTester.Core.dll
 D:\lewis_ProJ\Temperature\src\ModbusTester.Core\obj\Debug\net8.0\ModbusTester.Core.pdb
 D:\lewis_ProJ\Temperature\src\ModbusTester.Core\obj\Debug\net8.0\ref\ModbusTester.Core.dll
+D:\lewis_ProJ\Temperature\src\ModbusTester.Core\obj\Debug\net8.0\ModbusTester.Core.csproj.AssemblyReference.cache

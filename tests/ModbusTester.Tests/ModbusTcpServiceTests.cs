@@ -140,7 +140,7 @@ public class ModbusTcpServiceTests
 
         var log = new CommunicationLogger();
         await using var service = new ModbusService(log);
-        bool connected = await service.ConnectAsync(new ModbusTcpTransport(new TcpSettings("127.0.0.1", closedPort)));
+        bool connected = await service.ConnectAsync(new ModbusTcpTransport(new TcpSettings("127.0.0.1", closedPort, TimeoutMs: 5000)));
 
         Assert.False(connected);
         Assert.Equal(ConnectionState.Error, service.State);
@@ -156,6 +156,32 @@ public class ModbusTcpServiceTests
 
         Assert.False(connected);
         Assert.True(service.State is ConnectionState.Timeout or ConnectionState.Error);
+    }
+
+    [Theory]
+    [InlineData(300)]
+    [InlineData(800)]
+    public async Task Connect_TimeoutFollowsTimeoutMs_AndLogMatches(int timeoutMs)
+    {
+        // 10.255.255.1 is non-routable from the test host, so SYN gets no answer.
+        var log = new CommunicationLogger();
+        await using var service = new ModbusService(log);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        bool connected = await service.ConnectAsync(new ModbusTcpTransport(new TcpSettings("10.255.255.1", 5020, timeoutMs)));
+
+        stopwatch.Stop();
+        Assert.False(connected);
+        Assert.Equal(ConnectionState.Timeout, service.State);
+        Assert.Contains(log.Entries, e => e.Message == $"Connect FAIL: Connect timeout ({timeoutMs} ms)");
+        Assert.InRange(stopwatch.ElapsedMilliseconds, timeoutMs - 50, timeoutMs + 1500);
+    }
+
+    [Fact]
+    public void Settings_ConnectTimeout_DefaultsToTimeout_UnlessGiven()
+    {
+        Assert.Equal(10000, new TcpSettings("h", 1, 10000).EffectiveConnectTimeoutMs);
+        Assert.Equal(300, new TcpSettings("h", 1, 10000, ConnectTimeoutMs: 300).EffectiveConnectTimeoutMs);
     }
 
     [Fact]

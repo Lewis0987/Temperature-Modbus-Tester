@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\ModbusTester.Core\ModbusTester.Core.csproj" />
@@ -15,5 +15,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ModbusTester.App.Tests" />
+  </ItemGroup>
 
 </Project>

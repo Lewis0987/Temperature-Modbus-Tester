@@ -30,7 +30,7 @@ public sealed class ModbusTcpTransport(TcpSettings settings) : IModbusTransport
 
         var client = new TcpClient { NoDelay = true };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(Settings.ConnectTimeoutMs);
+        timeout.CancelAfter(Settings.EffectiveConnectTimeoutMs);
         try
         {
             await client.ConnectAsync(Settings.Host, Settings.Port, timeout.Token);
@@ -39,7 +39,7 @@ public sealed class ModbusTcpTransport(TcpSettings settings) : IModbusTransport
         {
             client.Dispose();
             SetState(ConnectionState.Timeout);
-            throw new ModbusCommException(ResultStatus.Timeout, $"Connect timeout ({Settings.ConnectTimeoutMs} ms)");
+            throw new ModbusCommException(ResultStatus.Timeout, $"Connect timeout ({Settings.EffectiveConnectTimeoutMs} ms)");
         }
         catch (OperationCanceledException)
         {
@@ -54,7 +54,8 @@ public sealed class ModbusTcpTransport(TcpSettings settings) : IModbusTransport
             throw ex.SocketErrorCode switch
             {
                 SocketError.ConnectionRefused => new ModbusCommException(ResultStatus.ConnectionRefused, "Connection Refused", ex),
-                SocketError.TimedOut => new ModbusCommException(ResultStatus.Timeout, "Connect timeout", ex),
+                SocketError.TimedOut => new ModbusCommException(ResultStatus.Timeout,
+                    $"Connect timeout (the OS gave up before {Settings.EffectiveConnectTimeoutMs} ms)", ex),
                 _ => new ModbusCommException(ResultStatus.ConnectionFailed, $"Connect failed: {ex.SocketErrorCode} ({ex.Message})", ex),
             };
         }

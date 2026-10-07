@@ -11,6 +11,9 @@ public class ModbusCommException(ResultStatus status, string message, Exception?
     /// <summary>Raw frames captured before the failure, if any (set by the transport).</summary>
     public byte[]? TxFrame { get; set; }
     public byte[]? RxFrame { get; set; }
+
+    /// <summary>Transport check results to log, e.g. CRC received/calculated.</summary>
+    public IReadOnlyList<string> Details { get; set; } = [];
 }
 
 /// <summary>The slave answered with a Modbus exception response (function code | 0x80).</summary>

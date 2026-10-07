@@ -1,0 +1,113 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:controls="clr-namespace:ModbusTester.App.Controls">
+
+    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+    <!-- Light ▼: no button chrome, transparent, very faint highlight on hover. -->
+    <Style x:Key="HistoryArrowStyle" TargetType="ToggleButton">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="ToolTip" Value="History" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Bd" Background="Transparent" BorderThickness="0" CornerRadius="2" Padding="3,0" Margin="0,2">
+                        <TextBlock x:Name="Arrow" Text="▼" FontSize="9" Foreground="#666" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#14000000" />
+                            <Setter TargetName="Arrow" Property="Foreground" Value="#222" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Arrow" Property="Foreground" Value="#BBB" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Flat list row / × button inside the popup. -->
+    <Style x:Key="HistoryRowButtonStyle" TargetType="Button">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="6,3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#E5F1FB" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="#AAA" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="controls:HistoryField">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="controls:HistoryField">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ContentPresenter x:Name="PART_Content" />
+                        <!-- Collapsed (not just disabled) while the history is empty. -->
+                        <ToggleButton x:Name="PART_Arrow" Grid.Column="1" Style="{StaticResource HistoryArrowStyle}"
+                                      IsChecked="{Binding History.IsOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Visibility="{Binding History.HasItems, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BoolToVisibility}, FallbackValue=Collapsed}" />
+                        <Popup x:Name="PART_Popup" PlacementTarget="{Binding ElementName=PART_Content}" Placement="Bottom"
+                               StaysOpen="False" IsOpen="{Binding History.IsOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                            <Border Background="White" BorderBrush="#999" BorderThickness="1"
+                                    MinWidth="{Binding ActualWidth, ElementName=PART_Content}"
+                                    DataContext="{Binding History, RelativeSource={RelativeSource TemplatedParent}}">
+                                <StackPanel>
+                                    <ItemsControl ItemsSource="{Binding Items}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <!-- Two sibling buttons: the row applies the value, × deletes it.
+                                                     A click on × is handled by × only and never reaches the row. -->
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Button Content="{Binding}" FontFamily="Consolas" ToolTip="Use this value"
+                                                            Style="{StaticResource HistoryRowButtonStyle}"
+                                                            Command="{Binding DataContext.ApplyCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button Grid.Column="1" Content="×" ToolTip="Delete this entry"
+                                                            Style="{StaticResource HistoryRowButtonStyle}" Padding="8,0"
+                                                            Foreground="Firebrick" FontWeight="Bold"
+                                                            Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                            CommandParameter="{Binding}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <!-- While open, let a click on ▼ fall through to close the popup instead of re-opening it. -->
+                        <Trigger SourceName="PART_Popup" Property="IsOpen" Value="True">
+                            <Setter TargetName="PART_Arrow" Property="IsHitTestVisible" Value="False" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

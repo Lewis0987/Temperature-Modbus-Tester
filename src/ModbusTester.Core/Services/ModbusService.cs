@@ -54,6 +54,27 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
         Logger.Info($"{_transport.Description} Disconnected");
     }
 
+    /// <summary>
+    /// Drops the current transport (closing it if still open) and reports <see cref="ConnectionState.Disconnected"/>,
+    /// so an Error/Timeout state of one connection type is not carried over to another. The state change is
+    /// raised synchronously, before the old transport is disposed. The log is left untouched.
+    /// </summary>
+    public async Task ResetAsync()
+    {
+        IModbusTransport? old = _transport;
+        if (old is null)
+            return;
+        _transport = null;
+        old.StateChanged -= OnTransportStateChanged;
+        old.StaleBytesDiscarded -= OnStaleBytesDiscarded;
+        bool wasOpen = old.State is ConnectionState.Connected or ConnectionState.Connecting;
+        StateChanged?.Invoke(this, ConnectionState.Disconnected);
+
+        await old.DisposeAsync();
+        if (wasOpen)
+            Logger.Info($"{old.Description} Disconnected");
+    }
+
     /// <summary>FC03 Read Holding Registers / FC04 Read Input Registers.</summary>
     public async Task<ModbusResult> ReadRegistersAsync(ModbusRequest request, CancellationToken cancellationToken = default)
     {
@@ -72,7 +93,7 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
         }
 
         Logger.Log(LogKind.Tx,
-            $"{request.Function.ToShortName()}  Unit ID = {request.UnitId}  Address = {request.StartAddress} " +
+            $"{request.Function.ToShortName()}  {_transport?.UnitIdLabel ?? "Unit ID"} = {request.UnitId}  Address = {request.StartAddress} " +
             $"(PDU 0x{request.PduAddress:X4}, {(request.AddressBase == AddressBase.OneBased ? "1-based" : "0-based")})  Quantity = {request.Quantity}");
 
         if (_transport is null)
@@ -86,6 +107,7 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
             stopwatch.Stop();
             Logger.Log(LogKind.Tx, $"[{HexFormatter.Format(reply.TxFrame)}]");
             Logger.Log(LogKind.Rx, $"[{HexFormatter.Format(reply.RxFrame)}]");
+            LogDetails(reply.Details);
 
             ushort[] values = ModbusPdu.ParseReadRegistersResponse(request.Function, reply.Pdu, request.Quantity);
             Logger.Log(LogKind.Rx, string.Join(", ", values));
@@ -112,6 +134,7 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
                     Logger.Log(LogKind.Tx, $"[{HexFormatter.Format(ex.TxFrame)}]");
                 if (ex.RxFrame is not null)
                     Logger.Log(LogKind.Rx, $"[{HexFormatter.Format(ex.RxFrame)}]");
+                LogDetails(ex.Details);
             }
             ex.TxFrame ??= reply?.TxFrame;
             ex.RxFrame ??= reply?.RxFrame;
@@ -123,7 +146,13 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
     {
         if (elapsedMs > 0)
             Logger.Info($"Response Time: {elapsedMs:F0} ms");
-        Logger.Log(LogKind.Fail, $"Result: FAIL - {ex.Message}");
+        string label = ex.Status switch
+        {
+            ResultStatus.Timeout => "TIMEOUT",
+            ResultStatus.CrcError => "CRC ERROR",
+            _ => "FAIL",
+        };
+        Logger.Log(LogKind.Fail, $"Result: {label} [{ex.Status}] - {ex.Message}");
 
         return new ModbusResult
         {
@@ -135,6 +164,12 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
             ExceptionCode = (ex as ModbusSlaveException)?.Code,
             ErrorMessage = ex.Message,
         };
+    }
+
+    private void LogDetails(IReadOnlyList<string>? details)
+    {
+        foreach (string line in details ?? [])
+            Logger.Info(line);
     }
 
     private void OnTransportStateChanged(object? sender, ConnectionState state) => StateChanged?.Invoke(this, state);

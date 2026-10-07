@@ -12,5 +12,9 @@ public enum ResultStatus
     CrcError,
     ModbusException,
     InvalidRequest,
-    Error,
+    SerialPortUnavailable,
+    SerialPortDisconnected,
+    UnauthorizedAccess,
+    IOException,
+    UnknownError,
 }
