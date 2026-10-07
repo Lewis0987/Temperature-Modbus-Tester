@@ -1,31 +1,70 @@
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ModbusTester.Core.Models;
+using ModbusTester.Core.Services;
 
 namespace ModbusTester.App.ViewModels;
 
-/// <summary>One result row; Scale is editable and Value follows it.</summary>
-public sealed partial class RegisterRowViewModel(RegisterRow row, Action<int, double> scaleChanged) : ObservableObject
+/// <summary>
+/// One result row. Registers defined by the selected device profile are decoded from the document and their
+/// Scale is fixed; all other registers (always, in Generic mode) keep the editable manual Scale.
+/// </summary>
+public sealed partial class RegisterRowViewModel(DecodedRegister register, Action<int, double> scaleChanged) : ObservableObject
 {
-    private RegisterRow _row = row;
+    private DecodedRegister _register = register;
 
-    public int Address => _row.Address;
-    public ushort Raw => _row.Raw;
-    public double Decimal => _row.Decoded;
-    public string Hex => _row.Hex;
-    public string Binary => _row.Binary;
-    public double Value => _row.Value;
+    public int Address => _register.Address;
+    public string Description => _register.Description;
+    public string ChineseDescription => _register.ChineseDescription;
+    public ushort Raw => _register.Raw;
+
+    /// <summary>Raw after sign conversion (e.g. -1234 for an Int16 temperature), before scaling.</summary>
+    public long Decimal => _register.Integer;
+
+    public string Hex => _register.Hex;
+    public string Binary => _register.Binary;
+    public string Unit => _register.Unit;
+    public RegisterQuality Quality => _register.Quality;
+
+    /// <summary>Engineering value; null for status registers.</summary>
+    public double? Value => _register.Value;
+
+    /// <summary>What the Value column shows: "25.34", "No error", "Unknown (5)", "523.12 (Out of range)".</summary>
+    public string ValueText => _register.DisplayValue;
+
+    /// <summary>False for profile-defined registers: the document decides their scale.</summary>
+    public bool IsScaleEditable => !_register.IsProfileControlled;
+
+    /// <summary>
+    /// Scale as shown and edited in the grid: "0.01", "1" (no document scaling) or "-" (status register).
+    /// Editing is ignored for profile-defined rows; text that is not a number is rejected (red cell, old value kept).
+    /// </summary>
+    public string ScaleText
+    {
+        get => _register.ScaleText;
+        set
+        {
+            if (!IsScaleEditable)
+                return;
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double scale) || !double.IsFinite(scale))
+                throw new FormatException($"Scale '{value}' is not a number (e.g. 0.01).");
+            Scale = scale;
+        }
+    }
 
     public double Scale
     {
-        get => _row.Scale;
+        get => _register.Scale ?? 1;
         set
         {
-            if (_row.Scale == value)
+            if (!IsScaleEditable || _register.Scale == value)
                 return;
-            _row = _row with { Scale = value };
+            _register = RegisterDecoder.DecodeGeneric(_register.Address, _register.PduAddress, _register.Raw, value);
             scaleChanged(Address, value);
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ScaleText));
             OnPropertyChanged(nameof(Value));
+            OnPropertyChanged(nameof(ValueText));
         }
     }
 }

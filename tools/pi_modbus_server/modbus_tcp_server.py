@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Modbus TCP test server for Modbus Tester (Phase 1.5).
+r"""Modbus TCP test server for Modbus Tester (Phase 1.5).
 
 Runs on the Raspberry Pi (Temperature, 192.168.137.189) and serves 6 holding
 registers for Unit ID 1 on port 5020.
@@ -35,7 +35,16 @@ from pymodbus import __version__ as pymodbus_version
 from pymodbus.server import StartAsyncTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
-HOLDING_REGISTERS = [2534, 0, 4856, 0, 650, 0]
+# Default data = normal values per Siemens A6V12258321 section 4.3 (registers 1-6, all within the document range).
+# Keep out-of-range values (e.g. 0xDEAD = 57005) out of the defaults; the automated tests cover those.
+HOLDING_REGISTERS = [
+    2534,   # Reg 1 Temperature           = 25.34 degC  (Int16, scale 0.01, -327...327)
+    0,      # Reg 2 Temperature reliability = 0 No error  (1 = bad reliability, unavailable)
+    4856,   # Reg 3 Relative humidity     = 48.56 %     (scale 0.01, 0...100)
+    0,      # Reg 4 Humidity reliability  = 0 No error
+    650,    # Reg 5 CO2                   = 650 ppm     (no scaling, 0...2000)
+    0,      # Reg 6 CO2 reliability       = 0 No error
+]
 FUNCTION_NAMES = {1: "FC01", 2: "FC02", 3: "FC03", 4: "FC04", 5: "FC05", 6: "FC06", 15: "FC15", 16: "FC16"}
 
 log = logging.getLogger("modbus_tcp_server")

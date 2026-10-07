@@ -209,29 +209,72 @@
                 <Label Grid.Row="1" Content="Address Base" />
                 <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AddressBases}" SelectedItem="{Binding SelectedAddressBase}" />
                 <Label Grid.Row="1" Grid.Column="2" Content="Default Scale"
-                       ToolTip="Scale for registers that have no scale of their own yet. Each row's Scale can be edited independently." />
+                       ToolTip="Scale for registers that have no scale of their own yet (registers defined by the device profile always use the document scale)." />
                 <controls:HistoryField Grid.Row="1" Grid.Column="3" History="{Binding DefaultScaleHistory}">
                     <TextBox Text="{Binding DefaultScaleText, UpdateSourceTrigger=PropertyChanged}" />
                 </controls:HistoryField>
                 <Button Grid.Row="1" Grid.Column="4" Grid.ColumnSpan="2" Content="Apply to all rows" Command="{Binding ApplyDefaultScaleCommand}"
-                        ToolTip="Overwrite every row's Scale with Default Scale (rows stay individually editable afterwards)." />
+                        ToolTip="Overwrite the Scale of every manually scaled row with Default Scale (rows defined by the device profile are not changed)." />
                 <!-- No PASS/FAIL text here: every result (PASS, response time, failure reason) is in the Communication Log. -->
+                <Label Grid.Row="1" Grid.Column="6" Content="Device Profile"
+                       ToolTip="Generic Modbus: raw value × manual scale. A device profile decodes the registers it defines from the device document." />
+                <ComboBox Grid.Row="1" Grid.Column="7" Grid.ColumnSpan="2" Width="220" HorizontalAlignment="Left"
+                          ItemsSource="{Binding DeviceProfiles}" SelectedItem="{Binding SelectedDeviceProfile}"
+                          DisplayMemberPath="Name" ToolTip="{Binding SelectedDeviceProfile.Description}" />
             </Grid>
         </GroupBox>
 
         <!-- ===== Result ===== -->
-        <GroupBox Grid.Row="2" Header="Registers (Scale column is editable)">
-            <DataGrid ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
+        <GroupBox Grid.Row="2" Header="Registers (Scale is editable unless the device profile defines it)">
+            <DataGrid x:Name="RegistersGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
                       CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None"
-                      FontFamily="Consolas">
+                      FontFamily="Consolas" BeginningEdit="RegistersGrid_BeginningEdit">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Address" Binding="{Binding Address}" IsReadOnly="True" Width="80" />
-                    <DataGridTextColumn Header="Raw" Binding="{Binding Raw}" IsReadOnly="True" Width="80" />
-                    <DataGridTextColumn Header="Decimal" Binding="{Binding Decimal}" IsReadOnly="True" Width="80" />
-                    <DataGridTextColumn Header="HEX" Binding="{Binding Hex}" IsReadOnly="True" Width="70" />
-                    <DataGridTextColumn Header="Binary" Binding="{Binding Binary}" IsReadOnly="True" Width="180" />
-                    <DataGridTextColumn Header="Scale" Binding="{Binding Scale, UpdateSourceTrigger=LostFocus}" Width="80" />
-                    <DataGridTextColumn Header="Value" Binding="{Binding Value}" IsReadOnly="True" Width="*" FontWeight="Bold" />
+                    <DataGridTextColumn Header="Address" Binding="{Binding Address}" IsReadOnly="True" Width="65" />
+                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" IsReadOnly="True" Width="185">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding ChineseDescription}" />
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Raw" Binding="{Binding Raw}" IsReadOnly="True" Width="65" />
+                    <DataGridTextColumn Header="Decimal" Binding="{Binding Decimal}" IsReadOnly="True" Width="70" />
+                    <DataGridTextColumn Header="HEX" Binding="{Binding Hex}" IsReadOnly="True" Width="50" />
+                    <DataGridTextColumn Header="Binary" Binding="{Binding Binary}" IsReadOnly="True" Width="165" />
+                    <!-- Profile-defined rows: document scale ("-" for status registers), grey and not editable. -->
+                    <DataGridTextColumn x:Name="ScaleColumn" Header="Scale" Width="60"
+                                        Binding="{Binding ScaleText, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsScaleEditable}" Value="False">
+                                        <Setter Property="Foreground" Value="Gray" />
+                                        <Setter Property="FontStyle" Value="Italic" />
+                                        <Setter Property="ToolTip" Value="Defined by the device profile (not editable)" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Value" Binding="{Binding ValueText}" IsReadOnly="True" Width="*" FontWeight="Bold">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Quality}" Value="{x:Static models:RegisterQuality.OutOfRange}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                        <Setter Property="ToolTip" Value="Outside the range in the device document (the read itself succeeded)" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Quality}" Value="{x:Static models:RegisterQuality.UnknownState}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                        <Setter Property="ToolTip" Value="Value not defined in the device document" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Unit" Binding="{Binding Unit}" IsReadOnly="True" Width="55" />
                 </DataGrid.Columns>
             </DataGrid>
         </GroupBox>

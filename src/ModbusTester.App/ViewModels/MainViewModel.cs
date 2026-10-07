@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.Input;
 using ModbusTester.App.History;
 using ModbusTester.App.Validation;
 using ModbusTester.Core.Models;
+using ModbusTester.Core.Profiles;
 using ModbusTester.Core.Services;
 using ModbusTester.Core.Transport;
 
@@ -180,6 +181,17 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     [ObservableProperty] private string _startAddressText = "1";
     [ObservableProperty] private string _quantityText = "6";
     [ObservableProperty] private string _defaultScaleText = "1";
+
+    /// <summary>Generic Modbus (default) or a device document that tells what each register means.</summary>
+    public IReadOnlyList<DeviceProfile> DeviceProfiles => DeviceProfile.All;
+
+    [ObservableProperty] private DeviceProfile _selectedDeviceProfile = DeviceProfile.Generic;
+
+    public bool IsGenericProfile => SelectedDeviceProfile.IsGeneric;
+
+    /// <summary>Last successful read and the Default Scale it used, so a profile change can re-decode without reading again.</summary>
+    private (ModbusResult Result, double DefaultScale)? _lastRead;
+
     [ObservableProperty] private string _lastResult = "";
     [ObservableProperty] private bool _lastResultPassed;
 
@@ -309,9 +321,8 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
                 AddressHistory.Record(address.Value.ToString(CultureInfo.InvariantCulture));
                 QuantityHistory.Record(quantity.Value.ToString(CultureInfo.InvariantCulture));
                 DefaultScaleHistory.Record(defaultScale.Value.ToString(CultureInfo.InvariantCulture));
-                Rows.Clear();
-                foreach (RegisterRow row in RegisterService.BuildRows(result, a => _scales.GetValueOrDefault(a, defaultScale.Value)))
-                    Rows.Add(new RegisterRowViewModel(row, (a, scale) => _scales[a] = scale));
+                _lastRead = (result, defaultScale.Value);
+                RebuildRows();
             }
         }
         catch (OperationCanceledException)
@@ -361,7 +372,10 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     [RelayCommand]
     private void CopyLog() => Clipboard.SetText(string.Join(Environment.NewLine, LogEntries));
 
-    /// <summary>Overwrites every row's Scale with Default Scale; rows stay individually editable afterwards.</summary>
+    /// <summary>
+    /// Overwrites the Scale of every manually scaled row with Default Scale; rows stay individually editable
+    /// afterwards. Rows defined by the selected device profile keep the document scale.
+    /// </summary>
     [RelayCommand]
     private void ApplyDefaultScale()
     {
@@ -369,8 +383,24 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         if (!Gate(scale))
             return;
         _scales.Clear();
-        foreach (RegisterRowViewModel row in Rows)
+        foreach (RegisterRowViewModel row in Rows.Where(r => r.IsScaleEditable))
             row.Scale = scale.Value;
+    }
+
+    /// <summary>Decodes the last successful read with the selected profile (also used when the profile changes).</summary>
+    private void RebuildRows()
+    {
+        Rows.Clear();
+        if (_lastRead is not var (result, defaultScale))
+            return;
+        foreach (DecodedRegister register in RegisterService.Decode(result, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale)))
+            Rows.Add(new RegisterRowViewModel(register, (a, scale) => _scales[a] = scale));
+    }
+
+    partial void OnSelectedDeviceProfileChanged(DeviceProfile value)
+    {
+        OnPropertyChanged(nameof(IsGenericProfile));
+        RebuildRows();
     }
 
     // ---- Validation (INotifyDataErrorInfo drives the WPF red border) ----
