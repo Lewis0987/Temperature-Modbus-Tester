@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ModbusTester.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+687827936ca3b2943edf48eb95cd0a002c4009b1")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+76d15e422f330ad8ff7667e9d4f2a33a0c318f8c")]
 [assembly: System.Reflection.AssemblyProductAttribute("ModbusTester.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ModbusTester.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
