@@ -96,7 +96,7 @@ public class RegisterReadNoResultTextUiTests
 
     // Test 1 + Test 2
     [Theory]
-    [InlineData("pass", "Result: PASS")]
+    [InlineData("pass", "Response Time:")]   // success: no "Result:" line, the log ends at Response Time
     [InlineData("timeout", "Result: TIMEOUT [Timeout] - Timeout after 150 ms (no response)")]
     [InlineData("crc", "Result: CRC ERROR [CrcError]")]
     [InlineData("exception", "Result: FAIL [ModbusException] - Modbus Exception 0x02: Illegal Data Address")]
@@ -125,7 +125,7 @@ public class RegisterReadNoResultTextUiTests
             await Until(() => vm.IsConnected);
             Assert.True(vm.IsConnected);
             Click(Btn("Read"));
-            await Until(() => vm.LogEntries.Any(e => e.Message.StartsWith("Result:")));
+            await Until(() => vm.LogEntries.Any(e => e.Message.StartsWith(expectedLog)));
             await Task.Delay(100);
 
             string[] after = RegisterReadTexts(w);
@@ -134,8 +134,12 @@ public class RegisterReadNoResultTextUiTests
             Assert.Contains(vm.LogEntries, e => e.Message.StartsWith(expectedLog));
             if (scenario == "pass")
             {
-                Assert.Contains(vm.LogEntries, e => e.Message.StartsWith("Response Time:"));
+                Assert.DoesNotContain(vm.LogEntries, e => e.Message.StartsWith("Result:"));
                 Assert.Equal(6, vm.Rows.Count);                                     // table still filled
+            }
+            else
+            {
+                Assert.Contains(vm.LogEntries, e => e.Message.StartsWith("Response Time:"));   // failures keep it too
             }
         });
     }

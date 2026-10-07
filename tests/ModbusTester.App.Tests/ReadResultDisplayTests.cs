@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using ModbusTester.App.ViewModels;
+using ModbusTester.Core.Models;
 using ModbusTester.Core.Protocol;
 using ModbusTester.Tests;
 
@@ -44,6 +45,15 @@ public class ReadResultDisplayTests
 
     private static bool LogHas(MainViewModel vm, string text) => vm.LogEntries.Any(e => e.Message.Contains(text));
 
+    /// <summary>A successful read logs Tx, frames, values and Response Time, and no "Result:" line.</summary>
+    private static void AssertSuccessLog(MainViewModel vm)
+    {
+        Assert.Contains(vm.LogEntries, e => e.Kind == LogKind.Tx && e.Message.StartsWith("FC03"));
+        Assert.Contains(vm.LogEntries, e => e.Kind == LogKind.Rx && e.Message == "2534, 0, 4856, 0, 650, 0");
+        Assert.StartsWith("Response Time:", vm.LogEntries[^1].Message);
+        Assert.DoesNotContain(vm.LogEntries, e => e.Message.StartsWith("Result:"));
+    }
+
     // 1. TCP FC03 PASS
     [Fact]
     public async Task Tcp_Pass_ShowsPassAndMs()
@@ -57,6 +67,7 @@ public class ReadResultDisplayTests
         Assert.Matches(PassText, vm.LastResult);
         Assert.True(vm.LastResultPassed);
         Assert.Equal(Registers, vm.Rows.Select(r => r.Raw));
+        AssertSuccessLog(vm);
     }
 
     // 2. RTU FC03 PASS
@@ -69,6 +80,7 @@ public class ReadResultDisplayTests
 
         Assert.Matches(PassText, vm.LastResult);
         Assert.True(vm.LastResultPassed);
+        AssertSuccessLog(vm);
     }
 
     // 3. Timeout (TCP and RTU)
@@ -157,7 +169,7 @@ public class ReadResultDisplayTests
         await vm.ReadCommand.ExecuteAsync(null);
 
         Assert.Equal("FAIL", vm.LastResult);
-        Assert.True(LogHas(vm, "Illegal Data Address"));
+        Assert.True(LogHas(vm, "Result: FAIL [ModbusException] - Modbus Exception 0x02: Illegal Data Address"));
     }
 
     // 8. Switching TCP/RTU clears the previous result (log kept)
@@ -172,7 +184,7 @@ public class ReadResultDisplayTests
 
         Assert.Equal("", vm.LastResult);
         Assert.False(vm.LastResultPassed);
-        Assert.True(LogHas(vm, "Result: PASS"));
+        Assert.True(LogHas(vm, "Response Time:"));   // log kept (a PASS read has no "Result:" line)
     }
 
     // 9. Disconnect clears the previous result (log kept)

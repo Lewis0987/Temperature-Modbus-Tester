@@ -222,7 +222,7 @@
         <!-- ===== Result ===== -->
         <GroupBox Grid.Row="2" Header="Registers (Scale column is editable)">
             <DataGrid ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
-                      CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                      CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None"
                       FontFamily="Consolas">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Address" Binding="{Binding Address}" IsReadOnly="True" Width="80" />

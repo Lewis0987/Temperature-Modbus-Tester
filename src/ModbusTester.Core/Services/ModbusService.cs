@@ -112,7 +112,7 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
             ushort[] values = ModbusPdu.ParseReadRegistersResponse(request.Function, reply.Pdu, request.Quantity);
             Logger.Log(LogKind.Rx, string.Join(", ", values));
             Logger.Info($"Response Time: {stopwatch.Elapsed.TotalMilliseconds:F0} ms");
-            Logger.Log(LogKind.Pass, "Result: PASS");
+            // A successful read ends the log at Response Time; only failures get a "Result:" line (see Fail).
 
             return new ModbusResult
             {

@@ -35,8 +35,13 @@ public class ModbusTcpServiceTests
         Assert.Equal(new ushort[] { 2534, 0, 4856, 0, 410, 0 }, result.Registers);
         // MBAP: tid 0001, pid 0000, len 0006, unit 01 | PDU: 03 0000 0006
         Assert.Equal("00 01 00 00 00 06 01 03 00 00 00 06", HexFormatter.Format(slave.ReceivedAdus.Single()));
-        Assert.Contains(log.Entries, e => e.Kind == LogKind.Pass);
-        Assert.Contains(log.Entries, e => e.Message.StartsWith("Response Time"));
+        // Success: Tx, Tx frame, Rx frame, Rx values, Response Time, and no "Result:" line.
+        Assert.Equal(
+            [LogKind.Tx, LogKind.Tx, LogKind.Rx, LogKind.Rx, LogKind.Info],
+            log.Entries.SkipWhile(e => e.Kind != LogKind.Tx).Select(e => e.Kind));
+        Assert.Equal("2534, 0, 4856, 0, 410, 0", log.Entries[^2].Message);
+        Assert.StartsWith("Response Time:", log.Entries[^1].Message);
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("Result:") || e.Kind == LogKind.Pass);
     }
 
     [Fact]

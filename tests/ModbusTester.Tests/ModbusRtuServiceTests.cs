@@ -58,7 +58,10 @@ public class ModbusRtuServiceTests
         Assert.Contains(log.Entries, e => e.Message.Contains("Slave ID = 1") && e.Message.Contains("PDU 0x0000"));
         Assert.Contains(log.Entries, e => e.Message == "[01 03 00 00 00 06 C5 C8]");
         Assert.Contains(log.Entries, e => e.Message.EndsWith("CRC PASS"));
-        Assert.Contains(log.Entries, e => e.Kind == LogKind.Pass);
+        // Success ends at Response Time; no "Result:" line.
+        Assert.StartsWith("Response Time:", log.Entries[^1].Message);
+        Assert.Equal("2534, 0, 4856, 0, 650, 0", log.Entries[^2].Message);
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("Result:") || e.Kind == LogKind.Pass);
     }
 
     [Fact]
