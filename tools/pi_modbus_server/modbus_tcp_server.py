@@ -18,11 +18,18 @@ other Unit IDs get exception 04 (Slave Device Failure), which is pymodbus 3.15 b
 FC04 reads the same block as FC03 (shared register layout).
 
 Requires pymodbus 3.15 (SimData/SimDevice API; SimData.address is the 0-based PDU address).
+
+Foreground:  .venv\Scripts\python.exe modbus_tcp_server.py
+Background:  Start_ModbusTCP.ps1 / Stop_ModbusTCP.ps1 / Status_ModbusTCP.ps1 (Windows), which pass
+             --log-file / --error-log-file so the log keeps going after the console is closed.
 """
 
 import argparse
 import asyncio
 import logging
+import os
+import socket
+import sys
 
 from pymodbus import __version__ as pymodbus_version
 from pymodbus.server import StartAsyncTcpServer
@@ -69,28 +76,70 @@ def build_device(unit_id: int) -> SimDevice:
     return SimDevice(id=unit_id, simdata=[holding], action=log_access)
 
 
-async def main() -> None:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Modbus TCP test server for Modbus Tester")
     parser.add_argument("--host", default="0.0.0.0", help="listen address (default 0.0.0.0)")
     parser.add_argument("--port", type=int, default=5020, help="listen port (default 5020)")
     parser.add_argument("--unit", type=int, default=1, help="Unit ID (default 1)")
     parser.add_argument("--debug", action="store_true", help="show pymodbus frame-level debug log")
-    args = parser.parse_args()
+    parser.add_argument("--log-file", help="also append the log to this file")
+    parser.add_argument("--error-log-file", help="also append warnings and errors to this file")
+    return parser.parse_args()
 
-    logging.basicConfig(format="%(asctime)s %(levelname)-7s %(message)s", level=logging.INFO)
-    logging.getLogger("pymodbus").setLevel(logging.DEBUG if args.debug else logging.WARNING)
-    for handler in logging.getLogger().handlers:
+
+def setup_logging(args: argparse.Namespace) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if args.log_file:
+        handlers.append(logging.FileHandler(args.log_file, mode="a", encoding="utf-8"))
+    if args.error_log_file:
+        error_handler = logging.FileHandler(args.error_log_file, mode="a", encoding="utf-8")
+        error_handler.setLevel(logging.WARNING)
+        handlers.append(error_handler)
+    for handler in handlers:
         handler.addFilter(UnknownUnitFilter())
+    logging.basicConfig(format="%(asctime)s %(levelname)-7s %(message)s", level=logging.INFO, handlers=handlers)
+    logging.getLogger("pymodbus").setLevel(logging.DEBUG if args.debug else logging.WARNING)
 
-    log.info("pymodbus %s, listening on %s:%d, Unit ID %d", pymodbus_version, args.host, args.port, args.unit)
+
+def ensure_port_free(host: str, port: int) -> None:
+    """Fail fast if the port is taken.
+
+    pymodbus listens with SO_REUSEADDR; on Windows that lets a second server bind a port that is already
+    listening and silently take over new connections. A plain exclusive bind first makes that an error.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        probe.bind((host, port))
+    except OSError as ex:
+        raise SystemExit(f"Port {port} on {host} is already in use ({ex}); is another server running?") from ex
+    finally:
+        probe.close()
+
+
+async def main(args: argparse.Namespace) -> None:
+    ensure_port_free(args.host, args.port)
+    log.info("Server Start: PID %d, pymodbus %s, listening on %s:%d, Unit ID %d",
+             os.getpid(), pymodbus_version, args.host, args.port, args.unit)
     for i, value in enumerate(HOLDING_REGISTERS):
         log.info("  Register %d (PDU %d) = %d (0x%04X)", i + 1, i, value, value)
 
+    # Runs until the process is stopped (Ctrl+C in the foreground, Stop_ModbusTCP.ps1 in the background).
     await StartAsyncTcpServer(context=build_device(args.unit), address=(args.host, args.port))
 
 
 if __name__ == "__main__":
+    arguments = parse_args()
+    setup_logging(arguments)
     try:
-        asyncio.run(main())
+        asyncio.run(main(arguments))
+        log.warning("Server Stop: server loop ended unexpectedly")
     except KeyboardInterrupt:
-        pass
+        log.info("Server Stop: Ctrl+C")
+    except SystemExit as stop:
+        log.error("Server Stop: %s", stop)
+        sys.exit(1)
+    except Exception:
+        log.exception("Server Stop: crashed")
+        sys.exit(1)

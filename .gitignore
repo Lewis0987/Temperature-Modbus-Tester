@@ -25,3 +25,5 @@ Release/
 # OS files
 Thumbs.db
 .DS_Store
+# Modbus TCP test server runtime logs (Start_ModbusTCP.ps1)
+tools/pi_modbus_server/*.log
