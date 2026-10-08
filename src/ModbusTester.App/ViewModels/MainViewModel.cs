@@ -490,7 +490,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         if (!changed)
             return;
 
-        _lastRead = (patched, defaultScale);
+        // A unit selector (System unit 401) changes how the device encodes other registers (e.g. Reg 1 °C → °F), but
+        // those were read before the write. Keep the last read as one consistent snapshot then, so a later rebuild
+        // never labels an old °C value as °F; only the verified rows below show the new value.
+        bool unitSelectorWritten = DeviceProfile.All.SelectMany(p => p.Registers)
+            .Any(d => d.UnitSelectorRegister is { } n && verified.ContainsKey(n - 1));
+        if (!unitSelectorWritten)
+            _lastRead = (patched, defaultScale);
         IReadOnlyList<DecodedRegister> decoded = RegisterService.Decode(patched, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale));
         for (int i = 0; i < Rows.Count; i++)
         {

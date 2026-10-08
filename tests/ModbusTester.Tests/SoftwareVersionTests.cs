@@ -121,7 +121,7 @@ public class SoftwareVersionTests
 
         RegisterDefinition r401 = A6V.Find(400)!;
         Assert.Equal(["Celsius", "Fahrenheit"], r401.States.OrderBy(s => s.Key).Select(s => s.Value.Text));
-        Assert.Equal("°C", A6V.Find(0)!.Unit);                                        // Phase 3E still pending: no °F handling
+        Assert.Equal("°C", A6V.Find(0)!.Unit);                                        // base unit = 401 default (Celsius); °F only via 401 context
         Assert.Equal("°C", A6V.Find(222)!.Unit);
         Assert.Equal(RegisterValueEncoding.Plain, r401.ValueEncoding);
     }

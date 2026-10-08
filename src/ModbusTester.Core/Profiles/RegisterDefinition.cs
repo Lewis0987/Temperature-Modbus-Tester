@@ -23,6 +23,13 @@ public enum RegisterValueEncoding
     VersionBuild,
 }
 
+/// <summary>
+/// Unit and document range of a register for one state of its unit selector register (e.g. System unit 401 = 1 →
+/// "°F", -556.6…620.6). Deliberately no scale and no formula: the device itself changes the raw value, the tester
+/// only labels and range-checks it.
+/// </summary>
+public sealed record UnitVariant(string Unit, double? Min, double? Max);
+
 /// <summary>Meaning of one value of a status / enum register.</summary>
 public sealed record RegisterState(string Text, string ChineseText);
 
@@ -72,6 +79,26 @@ public sealed record RegisterDefinition
     /// (e.g. the effect of writing communication parameters is not documented). Null = writes may be sent.
     /// </summary>
     public string? WriteHoldReason { get; init; }
+
+    /// <summary>
+    /// Document register number of the status register that selects this register's unit and range (e.g. 401 System
+    /// unit); null = the unit is fixed. <see cref="Unit"/> / <see cref="Min"/> / <see cref="Max"/> are then the values
+    /// for the selector's default state, and <see cref="UnitVariants"/> lists one entry per selector state.
+    /// The value itself is never converted.
+    /// </summary>
+    public int? UnitSelectorRegister { get; init; }
+
+    /// <summary>Selector state (raw) → unit and range. Used only with <see cref="UnitSelectorRegister"/>.</summary>
+    public IReadOnlyDictionary<ushort, UnitVariant> UnitVariants { get; init; } = new Dictionary<ushort, UnitVariant>();
+
+    /// <summary>
+    /// This definition with the unit and range for the given selector state; an unknown state gives no unit and no
+    /// range (the value is still shown, but neither °C nor °F is claimed and nothing is flagged out of range).
+    /// </summary>
+    public RegisterDefinition ForUnitState(ushort? selectorState) =>
+        UnitSelectorRegister is null ? this
+        : selectorState is { } state && UnitVariants.TryGetValue(state, out UnitVariant? v) ? this with { Unit = v.Unit, Min = v.Min, Max = v.Max }
+        : this with { Unit = "", Min = null, Max = null };
 
     /// <summary>Word layout defined by the document (e.g. a software version); <see cref="RegisterValueEncoding.Plain"/> for ordinary registers.</summary>
     public RegisterValueEncoding ValueEncoding { get; init; } = RegisterValueEncoding.Plain;

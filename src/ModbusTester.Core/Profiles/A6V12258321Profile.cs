@@ -21,6 +21,9 @@ public static class A6V12258321Profile
     public const string Configuration = "Configuration";
     public const string Version = "Version";
 
+    /// <summary>Register 401 System unit: selects the unit and range of the temperature registers 1 and 223.</summary>
+    public const int SystemUnitRegister = 401;
+
     /// <summary>
     /// Why profile writes to 764–766 are encoded/validated but not sent yet. A6V12045847 confirms they are writable via
     /// a master only with DIP2 position 7 = OFF ("configurable via master", the default); with DIP2-7 = ON (DIP switch
@@ -43,8 +46,17 @@ public static class A6V12258321Profile
         // ---- Measurement (R) ----
         new RegisterDefinition
         {
+            // Phase 3E – PHYSICALLY VERIFIED (2026-10-08, real sensor, 401 0 → 1 → 0): the sensor itself outputs
+            // °C × 100 with 401 = 0 (raw 2793 → 27.93 °C) and °F × 100 with 401 = 1 (raw 8225 → 82.25 °F).
+            // The tester only switches unit and document range by 401; the value is always raw × 0.01, never converted.
             RegisterNumber = 1, Description = "Temperature value", ChineseDescription = "溫度", Group = Measurement,
             DataType = DataType.Int16, Scale = 0.01, Unit = "°C", Min = -327, Max = 327,
+            UnitSelectorRegister = SystemUnitRegister,
+            UnitVariants = new Dictionary<ushort, UnitVariant>
+            {
+                [0] = new("°C", -327, 327),
+                [1] = new("°F", -556.6, 620.6),
+            },
         },
         new RegisterDefinition
         {
@@ -76,10 +88,20 @@ public static class A6V12258321Profile
         // ---- Offset (RW, signed: negative offsets are two's complement on the wire, e.g. -15 = 0xFFF1) ----
         new RegisterDefinition
         {
-            // The document also lists -180...180 °F; the unit setting is not modelled yet, so °C is shown.
+            // Phase 3E – DOCUMENT-BASED, PHYSICAL VERIFICATION PENDING: the document gives -100...100 °C and
+            // -180...180 °F (scale 0.1). Like register 1 the unit and range follow 401 and the value is never
+            // converted, but whether the sensor really outputs a °F offset × 10 with 401 = 1 is not proven yet
+            // (the real sensor's offset was 0, which reads the same in both units).
+            // Writes still use the °C range above (the write path has no 401 context yet).
             RegisterNumber = 223, Description = "Temperature offset", ChineseDescription = "溫度偏移", Group = Offset,
             DataType = DataType.Int16, Scale = 0.1, Unit = "°C", Min = -100, Max = 100,
             Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            UnitSelectorRegister = SystemUnitRegister,
+            UnitVariants = new Dictionary<ushort, UnitVariant>
+            {
+                [0] = new("°C", -100, 100),
+                [1] = new("°F", -180, 180),
+            },
         },
         new RegisterDefinition
         {
@@ -98,7 +120,8 @@ public static class A6V12258321Profile
         // ---- Configuration (RW, no scaling: Scale "-") ----
         new RegisterDefinition
         {
-            // Document: "others = invalid value to be discard" → shown as Unknown (n), never Celsius/Fahrenheit.
+            // Document: "others = invalid value to be discard" → shown as Unknown (n), never Celsius/Fahrenheit;
+            // registers 1 / 223 then show no unit and no range check (see RegisterDefinition.ForUnitState).
             RegisterNumber = 401, Description = "System unit", ChineseDescription = "系統單位", Group = Configuration,
             DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
             States = new Dictionary<ushort, RegisterState>

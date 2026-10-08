@@ -351,9 +351,30 @@ public class RegisterTableSyncTests
         Assert.Equal("°C", vm.Rows.Single(r => r.Address == 223).Unit);
         Assert.Equal("1.5", vm.Rows.Single(r => r.Address == 223).ValueText);
 
-        string[] synced = Table(vm);
+        // Phase 3E: the next real read labels Reg 1 / 223 by 401 = 1 (°F). The value is still raw × scale – the fake
+        // slave does not change the raw value (on the real sensor the device does that itself).
         await ReadAsync(vm, "401");
-        Assert.Equal(synced, Table(vm));
+        Assert.Equal("Fahrenheit", vm.Rows.Single(r => r.Address == 401).ValueText);
+        Assert.Equal(("°F", "25.34"), (vm.Rows.Single(r => r.Address == 1).Unit, vm.Rows.Single(r => r.Address == 1).ValueText));
+        Assert.Equal(("°F", "1.5"), (vm.Rows.Single(r => r.Address == 223).Unit, vm.Rows.Single(r => r.Address == 223).ValueText));
+    }
+
+    // A verified 401 write must not relabel values that were read under the old unit (profile switch rebuild)
+    [Fact]
+    public async Task SystemUnitWrite_RebuildKeepsConsistentSnapshot()
+    {
+        var (vm, slave) = await ConnectAsync(A6V);
+        await using var _ = slave;
+        await using var __ = vm;
+        await ReadAsync(vm, "401");
+        string[] before = Table(vm);
+
+        await WriteProfileAsync(vm, 401, state: "Fahrenheit");
+        vm.SelectedDeviceProfile = DeviceProfile.Generic;
+        vm.SelectedDeviceProfile = A6V;
+
+        Assert.Equal(before, Table(vm));                                             // 401 Celsius + Reg 1 °C, as read
+        Assert.DoesNotContain(vm.Rows, r => r.Unit == "°F");
     }
 
     // Test 16: the read flow itself is unchanged
