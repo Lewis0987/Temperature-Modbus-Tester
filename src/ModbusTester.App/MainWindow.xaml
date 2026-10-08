@@ -341,7 +341,17 @@
         </GroupBox>
 
         <!-- ===== Result ===== -->
-        <GroupBox Grid.Row="3" Header="Registers (Scale is editable unless the device profile defines it)">
+        <GroupBox Grid.Row="3">
+            <!-- Software version: decoded by the Core from the profile's version registers (A6V12045847 format). -->
+            <GroupBox.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Registers (Scale is editable unless the device profile defines it)" />
+                    <TextBlock x:Name="SoftwareVersionText" Margin="16,0,0,0" FontWeight="SemiBold"
+                               Visibility="{Binding HasSoftwareVersion, Converter={StaticResource BoolToVisibility}}">
+                        <Run Text="Software version" Foreground="Gray" FontWeight="Normal" /> <Run Text="{Binding SoftwareVersionText, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </GroupBox.Header>
             <DataGrid x:Name="RegistersGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
                       CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None"
                       FontFamily="Consolas" BeginningEdit="RegistersGrid_BeginningEdit">

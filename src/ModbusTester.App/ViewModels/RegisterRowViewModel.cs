@@ -14,6 +14,8 @@ public sealed partial class RegisterRowViewModel(DecodedRegister register, Actio
     private DecodedRegister _register = register;
 
     public int Address => _register.Address;
+    /// <summary>Wire address of the row (Address Base already applied); used to match a verified write.</summary>
+    public ushort PduAddress => _register.PduAddress;
     public string Description => _register.Description;
     public string ChineseDescription => _register.ChineseDescription;
     public ushort Raw => _register.Raw;

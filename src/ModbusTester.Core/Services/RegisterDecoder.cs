@@ -72,6 +72,14 @@ public static class RegisterDecoder
             };
         }
 
+        // Two values in one word (document-defined layout): "Major.Minor", no number, no scale, no range.
+        if (definition.ValueEncoding == RegisterValueEncoding.VersionMajorMinor)
+            return new DecodedRegister
+            {
+                Address = address, PduAddress = pduAddress, Raw = raw, Definition = definition, Integer = integer,
+                ValueText = SoftwareVersion.MajorMinorText(raw),
+            };
+
         // Document Scaling "-" (null) means "no scaling": computed as ×1 (never ×0), but Scale stays null so it shows as "-".
         double value = Math.Round(integer * (definition.Scale ?? 1), 6);
         bool outOfRange = value < (definition.Min ?? double.NegativeInfinity) || value > (definition.Max ?? double.PositiveInfinity);

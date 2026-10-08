@@ -23,7 +23,9 @@ public sealed record ProfileWriteResult
 /// Writes one engineering value / status name to a register of a device profile:
 /// address → definition → writable? → <see cref="RegisterWriteEncoder"/> → hold check → FC06 request → <see cref="ModbusService"/>.
 /// Every refusal happens before the transport, so nothing reaches the device. Profile writes are single-register
-/// FC06 only; whether a device accepts FC16 is not assumed here.
+/// FC06 only; whether a device accepts FC16 is not assumed here. (A6V12045847 mentions that a "multiple-writing
+/// command" with invalid values is rejected with an error and leaves the registers unchanged, but names no function
+/// code – to be verified on the real sensor before any profile FC16.)
 /// </summary>
 public sealed class ProfileWriteService(ModbusService modbus)
 {

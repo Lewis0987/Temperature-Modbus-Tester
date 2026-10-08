@@ -24,6 +24,8 @@ internal interface IRegisterWriteHost
     /// <summary>Unit ID (TCP) or Slave ID (RTU) of the active connection type, parsed from the current text.</summary>
     Parsed<int> CurrentUnitId();
     CancellationToken OperationToken { get; }
+    /// <summary>A write was verified (read back equal to what was written): refresh the table rows that show those registers.</summary>
+    void ApplyVerifiedRead(ModbusResult readBack);
 }
 
 public enum WriteStatus
@@ -419,6 +421,8 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
             SetStatus(WriteStatus.VerificationMismatch, $"Write succeeded, verification mismatch ({detail})");
             return;
         }
+        // Only a verified write reaches the table, using this read back (no extra request).
+        _host.ApplyVerifiedRead(readBack);
         SetStatus(WriteStatus.Completed, $"Write completed (read back {describe(readBack.Registers)})");
     }
 

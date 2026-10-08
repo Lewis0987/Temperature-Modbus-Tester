@@ -9,6 +9,20 @@ public enum RegisterAccess
     ReadWrite,
 }
 
+/// <summary>
+/// How a register word is laid out when the document defines more than a plain (scaled) number.
+/// Only used by profile decoding; Generic Modbus never sees it.
+/// </summary>
+public enum RegisterValueEncoding
+{
+    /// <summary>The whole word is the value (Int16 / UInt16 / Status as per <see cref="RegisterDefinition.DataType"/>).</summary>
+    Plain,
+    /// <summary>Software version: high byte = Major, low byte = Minor; shown "Major.Minor" with two-digit Minor ("2.01").</summary>
+    VersionMajorMinor,
+    /// <summary>Software version: the 16-bit Build number (shown as a plain number; pairs with <see cref="VersionMajorMinor"/>).</summary>
+    VersionBuild,
+}
+
 /// <summary>Meaning of one value of a status / enum register.</summary>
 public sealed record RegisterState(string Text, string ChineseText);
 
@@ -58,6 +72,9 @@ public sealed record RegisterDefinition
     /// (e.g. the effect of writing communication parameters is not documented). Null = writes may be sent.
     /// </summary>
     public string? WriteHoldReason { get; init; }
+
+    /// <summary>Word layout defined by the document (e.g. a software version); <see cref="RegisterValueEncoding.Plain"/> for ordinary registers.</summary>
+    public RegisterValueEncoding ValueEncoding { get; init; } = RegisterValueEncoding.Plain;
 
     /// <summary>For <see cref="DataType.Status"/>: raw value → meaning. Values not listed are reported as unknown.</summary>
     public IReadOnlyDictionary<ushort, RegisterState> States { get; init; } = new Dictionary<ushort, RegisterState>();

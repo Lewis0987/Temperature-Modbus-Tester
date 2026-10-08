@@ -6,6 +6,8 @@ namespace ModbusTester.Core.Profiles;
 /// <summary>
 /// Siemens A6V12258321 – Room humidity and air quality sensors QFA2050/MO, QFA2050D/MO, QPA2052/MO,
 /// section 4.3 "Modbus registers" (holding registers, register numbers start at 1).
+/// Reconciled with the Basic Documentation A6V12045847 (2020-07-23): "Supports only the holding register" (so the
+/// profile reads with FC03 only) and "The register number starts at 1" (Register N = PDU address N - 1).
 /// Defined so far: measurement registers 1–6 (Phase 3A), offset registers 223–225 (Phase 3B) and configuration
 /// registers 401, 764–766 (Phase 3C) and version registers 1286–1287 (Phase 3D). Write encoding/validation (Phase 4B) uses
 /// the same metadata via RegisterWriteEncoder / ProfileWriteService; single-register profile writes use FC06 only.
@@ -20,11 +22,15 @@ public static class A6V12258321Profile
     public const string Version = "Version";
 
     /// <summary>
-    /// Why profile writes to 764–766 are encoded/validated but not sent yet: when new communication parameters take
-    /// effect, which settings the response uses and whether a reconnect is needed are not confirmed.
+    /// Why profile writes to 764–766 are encoded/validated but not sent yet. A6V12045847 confirms they are writable via
+    /// a master only with DIP2 position 7 = OFF ("configurable via master", the default); with DIP2-7 = ON (DIP switch
+    /// configuration) they are not writable via a master. The tester cannot see the DIP switches, and when new
+    /// communication parameters take effect / whether a reconnect is needed is still not confirmed.
+    /// (Factory reset of address, baud rate and format is a DIP operation – DIP1 1…8 = 255 with DIP2-7 = ON – not a
+    /// register write; the tester has no such function.)
     /// </summary>
     public const string CommunicationWriteHold =
-        "Communication parameter writes are on hold: effect timing / reconnect behaviour not confirmed";
+        "Communication parameter writes are on hold: effect timing / reconnect behaviour not confirmed, and the sensor's DIP2-7 setting (master vs. DIP switch configuration) is unknown";
 
     private static readonly IReadOnlyDictionary<ushort, RegisterState> Reliability = new Dictionary<ushort, RegisterState>
     {
@@ -103,8 +109,8 @@ public static class A6V12258321Profile
         },
         new RegisterDefinition
         {
-            // 246 is inside 1…247 but reserved for on-event addressing: a write of 246 is rejected via ExcludedValues
-            // (reading 246 back is still only range-checked, nothing else is assumed).
+            // Document: 1…247, default 1; "246 cannot be configured via a master. 246 is reserved for on-event
+            // addressing." → rejected via ExcludedValues (reading 246 back is still only range-checked).
             RegisterNumber = 764, Description = "Modbus address", ChineseDescription = "Modbus 位址", Group = Configuration,
             DataType = DataType.UInt16, Scale = null, Min = 1, Max = 247,
             Access = RegisterAccess.ReadWrite, DefaultValue = 1,
@@ -113,6 +119,7 @@ public static class A6V12258321Profile
         },
         new RegisterDefinition
         {
+            // Document default 0 = Auto (not 9600; the tester's 9600 is only its first connection attempt).
             RegisterNumber = 765, Description = "Baud rate", ChineseDescription = "鮑率", Group = Configuration,
             DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
             WriteHoldReason = CommunicationWriteHold,
@@ -143,19 +150,20 @@ public static class A6V12258321Profile
         },
 
         // ---- Version (R, no scaling) ----
-        // The register table gives no encoding for these words (e.g. how Major/Minor share register 1286), so the
-        // raw UInt16 is shown as-is; nothing is split or reformatted into "x.y".
+        // A6V12045847: Major 1 byte, Minor 1 byte, Build 2 bytes; example [2.01.33] = 0x02010021.
+        // 1286 = Major (high byte) / Minor (low byte) → "2.01"; 1287 = Build → 33; together "2.01.33" (SoftwareVersion).
         new RegisterDefinition
         {
             RegisterNumber = 1286, Description = "SW version: Major & Minor versions", ChineseDescription = "軟體版本：主要與次要版本",
-            Group = Version, DataType = DataType.UInt16, Scale = null,
+            Group = Version, DataType = DataType.UInt16, Scale = null, ValueEncoding = RegisterValueEncoding.VersionMajorMinor,
         },
         new RegisterDefinition
         {
             RegisterNumber = 1287, Description = "SW version: Build version", ChineseDescription = "軟體版本：建置版本",
-            Group = Version, DataType = DataType.UInt16, Scale = null,
+            Group = Version, DataType = DataType.UInt16, Scale = null, ValueEncoding = RegisterValueEncoding.VersionBuild,
         },
     ],
-    // Section 4.3 is a "Holding Register (16-bit) No." table: always read with FC03.
+    // Section 4.3 is a "Holding Register (16-bit) No." table and A6V12045847 says "Supports only the holding
+    // register": always read with FC03 (FC04 stays a Generic Modbus option only).
     requiredReadFunction: ModbusFunction.ReadHoldingRegisters);
 }

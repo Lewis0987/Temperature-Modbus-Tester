@@ -149,7 +149,8 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     public FieldHistory QuantityHistory { get; }
     public FieldHistory DefaultScaleHistory { get; }
 
-    // RTU (defaults follow the Siemens QFA/QPA document: 9600 / 8E1, Slave ID 1; all selectable)
+    // RTU start values, all selectable. 8E1 and Slave ID 1 are the Siemens QFA/QPA document defaults; 9600 is only the
+    // tester's first attempt – the document's default baud rate is 0 = Auto (register 765).
     public ObservableCollection<string> ComPorts { get; } = [];
     public IReadOnlyList<int> BaudRates { get; } = [9600, 19200, 38400, 57600, 115200];
     public IReadOnlyList<int> DataBitsOptions { get; } = [8];
@@ -214,6 +215,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
 
     /// <summary>Last successful read (one result per request) and the Default Scale it used, so a profile change can re-decode without reading again.</summary>
     private (IReadOnlyList<ModbusResult> Results, double DefaultScale)? _lastRead;
+
+    /// <summary>Software version from the decoded rows (profile version registers, e.g. "2.01.33"); "" when not read.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSoftwareVersion))]
+    private string _softwareVersionText = "";
+
+    public bool HasSoftwareVersion => SoftwareVersionText.Length > 0;
 
     [ObservableProperty] private string _lastResult = "";
     [ObservableProperty] private bool _lastResultPassed;
@@ -431,11 +439,62 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     private void RebuildRows()
     {
         Rows.Clear();
+        SoftwareVersionText = "";
         if (_lastRead is not var (results, defaultScale))
             return;
         // Merged and sorted by register, whatever order the requests completed in.
-        foreach (DecodedRegister register in RegisterService.Decode(results, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale)))
+        IReadOnlyList<DecodedRegister> decoded = RegisterService.Decode(results, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale));
+        foreach (DecodedRegister register in decoded)
             Rows.Add(new RegisterRowViewModel(register, (a, scale) => _scales[a] = scale));
+        SoftwareVersionText = SoftwareVersion.Find(decoded)?.ToString() ?? "";
+    }
+
+    /// <summary>
+    /// Phase 4C.1: after a verified write, the read-back words replace the same registers in the last read, and only
+    /// the rows already in the table are re-decoded – through the same <see cref="RegisterService.Decode"/> as a normal
+    /// read, so a row looks exactly as if it had been read. No request is sent and no row is added; a table read with
+    /// another function (e.g. FC04 input registers) or another Unit ID is left alone.
+    /// </summary>
+    void IRegisterWriteHost.ApplyVerifiedRead(ModbusResult readBack)
+    {
+        if (!readBack.IsSuccess || _lastRead is not var (results, defaultScale))
+            return;
+        ushort start = readBack.Request.PduAddress;
+        var verified = new Dictionary<int, ushort>();
+        for (int i = 0; i < readBack.Registers.Count; i++)
+            verified[start + i] = readBack.Registers[i];
+
+        bool changed = false;
+        ModbusResult[] patched = [.. results.Select(result =>
+        {
+            if (result.Request.Function != readBack.Request.Function || result.Request.UnitId != readBack.Request.UnitId)
+                return result;
+            ushort[] words = [.. result.Registers];
+            ushort first = result.Request.PduAddress;
+            bool touched = false;
+            for (int i = 0; i < words.Length; i++)
+                if (verified.TryGetValue(first + i, out ushort word))
+                {
+                    words[i] = word;
+                    touched = true;
+                }
+            changed |= touched;
+            return touched ? result with { Registers = words } : result;
+        })];
+        if (!changed)
+            return;
+
+        _lastRead = (patched, defaultScale);
+        IReadOnlyList<DecodedRegister> decoded = RegisterService.Decode(patched, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale));
+        for (int i = 0; i < Rows.Count; i++)
+        {
+            if (!verified.ContainsKey(Rows[i].PduAddress))
+                continue;
+            DecodedRegister? register = decoded.FirstOrDefault(d => d.PduAddress == Rows[i].PduAddress);
+            if (register is not null)
+                Rows[i] = new RegisterRowViewModel(register, (a, scale) => _scales[a] = scale);
+        }
+        SoftwareVersionText = SoftwareVersion.Find(decoded)?.ToString() ?? "";
     }
 
     /// <summary>The function actually sent: the profile's prescribed one, otherwise the user's choice (final gate).</summary>

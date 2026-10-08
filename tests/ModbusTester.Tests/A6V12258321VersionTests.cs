@@ -6,7 +6,10 @@ using ModbusTester.Core.Transport;
 
 namespace ModbusTester.Tests;
 
-/// <summary>Phase 3D: version registers 1286–1287, shown as raw UInt16 (the document gives no encoding).</summary>
+/// <summary>
+/// Phase 3D / 3D.1: version registers 1286–1287. A6V12045847 defines the layout: 1286 = Major (high byte) / Minor
+/// (low byte) shown "1.02", 1287 = Build shown as a number; together "1.02.123".
+/// </summary>
 public class A6V12258321VersionTests
 {
     private static readonly DeviceProfile Profile = A6V12258321Profile.Profile;
@@ -16,11 +19,12 @@ public class A6V12258321VersionTests
 
     // A + B: metadata
     [Theory]
-    [InlineData(1286, "SW version: Major & Minor versions")]
-    [InlineData(1287, "SW version: Build version")]
-    public void Definitions_MatchDocument(int register, string description)
+    [InlineData(1286, "SW version: Major & Minor versions", RegisterValueEncoding.VersionMajorMinor)]
+    [InlineData(1287, "SW version: Build version", RegisterValueEncoding.VersionBuild)]
+    public void Definitions_MatchDocument(int register, string description, RegisterValueEncoding encoding)
     {
         RegisterDefinition d = Profile.Find((ushort)(register - 1))!;
+        Assert.Equal(encoding, d.ValueEncoding);
         Assert.Equal(register, d.RegisterNumber);
         Assert.Equal(description, d.Description);
         Assert.Equal(DataType.UInt16, d.DataType);
@@ -35,25 +39,40 @@ public class A6V12258321VersionTests
         Assert.Equal(A6V12258321Profile.Version, d.Group);
     }
 
-    // C + D + E: raw UInt16, no split into "x.y", no sign, Scale "-"
+    // C + D + E: 1286 = "Major.Minor" (two-digit Minor), raw / HEX / Decimal unchanged, no sign, Scale "-"
     [Theory]
-    [InlineData(1286, 258, "0102", "258")]
-    [InlineData(1287, 123, "007B", "123")]
-    [InlineData(1286, 65535, "FFFF", "65535")]
-    [InlineData(1287, 32768, "8000", "32768")]
-    [InlineData(1286, 0, "0000", "0")]
-    public void Decode_IsRawUInt16(int register, int raw, string hex, string value)
+    [InlineData(258, "0102", "1.02")]
+    [InlineData(0x0201, "0201", "2.01")]
+    [InlineData(65535, "FFFF", "255.255")]
+    [InlineData(0, "0000", "0.00")]
+    public void Decode1286_IsMajorMinor(int raw, string hex, string value)
     {
-        DecodedRegister r = Decode(register, (ushort)raw);
+        DecodedRegister r = Decode(1286, (ushort)raw);
         Assert.Equal((ushort)raw, r.Raw);
-        Assert.Equal(raw, r.Integer);       // never negative
+        Assert.Equal(raw, r.Integer);       // Decimal column keeps the raw word
         Assert.Equal(hex, r.Hex);
         Assert.Equal("-", r.ScaleText);
         Assert.Null(r.Scale);
         Assert.Equal(value, r.ValueText);
-        Assert.Equal(raw, r.Value);
-        Assert.Equal(RegisterQuality.Ok, r.Quality);   // no document range, nothing to flag
+        Assert.Null(r.Value);               // two numbers in one word: not one engineering value
+        Assert.Equal(RegisterQuality.Ok, r.Quality);
         Assert.Equal("", r.Unit);
+    }
+
+    // 1287 = Build, a plain UInt16 number
+    [Theory]
+    [InlineData(123, "007B", "123")]
+    [InlineData(0x0021, "0021", "33")]
+    [InlineData(32768, "8000", "32768")]
+    [InlineData(65535, "FFFF", "65535")]
+    public void Decode1287_IsBuildNumber(int raw, string hex, string value)
+    {
+        DecodedRegister r = Decode(1287, (ushort)raw);
+        Assert.Equal(raw, r.Integer);       // never negative
+        Assert.Equal(hex, r.Hex);
+        Assert.Equal(value, r.ValueText);
+        Assert.Equal(raw, r.Value);
+        Assert.Equal(RegisterQuality.Ok, r.Quality);
     }
 
     // F + G + H: cumulative read, planner unchanged
@@ -116,7 +135,8 @@ public class A6V12258321VersionTests
         IReadOnlyList<DecodedRegister> rows = RegisterService.Decode(read.Results, Profile, _ => 1);
         Assert.Equal([1, 2, 3, 4, 5, 6, 223, 224, 225, 401, 764, 765, 766, 1286, 1287], rows.Select(r => r.Address));
         Assert.Equal(["SW version: Major & Minor versions", "SW version: Build version"], rows.Skip(13).Select(r => r.Description));
-        Assert.Equal(["258", "123"], rows.Skip(13).Select(r => r.ValueText));
+        Assert.Equal(["1.02", "123"], rows.Skip(13).Select(r => r.ValueText));
+        Assert.Equal("1.02.123", SoftwareVersion.Find(rows).ToString());
         Assert.Equal(["0102", "007B"], rows.Skip(13).Select(r => r.Hex));
         Assert.Equal(["-", "-"], rows.Skip(13).Select(r => r.ScaleText));
     }
@@ -138,5 +158,6 @@ public class A6V12258321VersionTests
         Assert.Equal(["0.01", "0.01"], rows.Select(r => r.ScaleText));
         Assert.All(rows, r => Assert.Equal("", r.Description));
         Assert.All(rows, r => Assert.False(r.IsProfileControlled));
+        Assert.Null(SoftwareVersion.Find(rows));
     }
 }

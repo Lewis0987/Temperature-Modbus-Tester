@@ -70,7 +70,9 @@ public class VersionRegistersViewModelTests
         Assert.Equal([258L, 123L], version.Select(r => r.Decimal));
         Assert.Equal(["0102", "007B"], version.Select(r => r.Hex));
         Assert.Equal(["-", "-"], version.Select(r => r.ScaleText));
-        Assert.Equal(["258", "123"], version.Select(r => r.ValueText));
+        Assert.Equal(["1.02", "123"], version.Select(r => r.ValueText));
+        Assert.Equal("1.02.123", vm.SoftwareVersionText);
+        Assert.True(vm.HasSoftwareVersion);
         Assert.Equal(["", ""], version.Select(r => r.Unit));
         Assert.All(version, r => Assert.False(r.IsScaleEditable));
     }
@@ -91,5 +93,7 @@ public class VersionRegistersViewModelTests
         Assert.Equal(["2.58", "1.23"], vm.Rows.Select(r => r.ValueText));
         Assert.All(vm.Rows, r => Assert.Equal("", r.Description));
         Assert.All(vm.Rows, r => Assert.True(r.IsScaleEditable));
+        Assert.Equal("", vm.SoftwareVersionText);           // Generic never decodes a version
+        Assert.False(vm.HasSoftwareVersion);
     }
 }
