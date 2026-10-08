@@ -19,6 +19,12 @@ public sealed class FakeModbusTcpSlave : IAsyncDisposable
     public byte? OverrideUnitId { get; set; }
     public List<byte[]> ReceivedAdus { get; } = [];
 
+    /// <summary>When set, every request is answered with this Modbus exception code (function | 0x80).</summary>
+    public byte? ForcedExceptionCode { get; set; }
+
+    /// <summary>Optional hook to corrupt the normal response PDU (wrong echo, truncation, other function...).</summary>
+    public Func<byte[], byte[]>? ResponseMutator { get; set; }
+
     public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
     public FakeModbusTcpSlave()
@@ -63,7 +69,9 @@ public sealed class FakeModbusTcpSlave : IAsyncDisposable
                     return;
                 }
 
-                byte[] response = Handle(pdu);
+                byte[] response = ForcedExceptionCode is { } code ? [(byte)(pdu[0] | 0x80), code] : Handle(pdu);
+                if (ResponseMutator is not null)
+                    response = ResponseMutator(response);
                 var adu = new byte[7 + response.Length];
                 header.AsSpan(0, 4).CopyTo(adu); // transaction id + protocol id
                 BinaryPrimitives.WriteUInt16BigEndian(adu.AsSpan(4), (ushort)(response.Length + 1));
@@ -81,6 +89,8 @@ public sealed class FakeModbusTcpSlave : IAsyncDisposable
     private byte[] Handle(byte[] pdu)
     {
         byte fc = pdu[0];
+        if (fc is 0x06 or 0x10)
+            return HandleWrite(pdu);
         if (fc is not (0x03 or 0x04))
             return [(byte)(fc | 0x80), 0x01];
 
@@ -95,6 +105,29 @@ public sealed class FakeModbusTcpSlave : IAsyncDisposable
         for (int i = 0; i < quantity; i++)
             BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(2 + i * 2), Registers[address + i]);
         return response;
+    }
+
+    /// <summary>FC06 / FC16: store into <see cref="Registers"/> and echo as a real slave does.</summary>
+    private byte[] HandleWrite(byte[] pdu)
+    {
+        byte fc = pdu[0];
+        int address = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(1));
+        if (fc == 0x06)
+        {
+            if (address >= Registers.Length)
+                return [0x86, 0x02];
+            Registers[address] = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(3));
+            return pdu[..5];   // echo
+        }
+
+        int quantity = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(3));
+        if (quantity is < 1 or > 123 || pdu[5] != quantity * 2 || pdu.Length != 6 + quantity * 2)
+            return [0x90, 0x03];
+        if (address + quantity > Registers.Length)
+            return [0x90, 0x02];
+        for (int i = 0; i < quantity; i++)
+            Registers[address + i] = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(6 + i * 2));
+        return pdu[..5];       // 10 | start address | quantity
     }
 
     public async ValueTask DisposeAsync()

@@ -94,35 +94,131 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
 
         Logger.Log(LogKind.Tx,
             $"{request.Function.ToShortName()}  {_transport?.UnitIdLabel ?? "Unit ID"} = {request.UnitId}  Address = {request.StartAddress} " +
-            $"(PDU 0x{request.PduAddress:X4}, {(request.AddressBase == AddressBase.OneBased ? "1-based" : "0-based")})  Quantity = {request.Quantity}");
+            $"(PDU 0x{request.PduAddress:X4}, {BaseText(request.AddressBase)})  Quantity = {request.Quantity}");
 
+        Exchange<ushort[]> x = await ExchangeAsync(request.UnitId, pdu,
+            response => ModbusPdu.ParseReadRegistersResponse(request.Function, response, request.Quantity),
+            values => Logger.Log(LogKind.Rx, string.Join(", ", values)),
+            cancellationToken);
+
+        return new ModbusResult
+        {
+            Request = request,
+            Status = x.Error?.Status ?? ResultStatus.Pass,
+            Registers = x.Value ?? [],
+            TxFrame = x.TxFrame,
+            RxFrame = x.RxFrame,
+            ElapsedMs = x.ElapsedMs,
+            ExceptionCode = (x.Error as ModbusSlaveException)?.Code,
+            ErrorMessage = x.Error?.Message,
+        };
+    }
+
+    /// <summary>FC06 Write Single Register (raw value; no scaling or device rules here).</summary>
+    public Task<ModbusWriteResult> WriteSingleRegisterAsync(byte unitId, int address, ushort value,
+        AddressBase addressBase = AddressBase.OneBased, CancellationToken cancellationToken = default) =>
+        WriteRegistersAsync(ModbusWriteRequest.Single(unitId, address, value, addressBase), cancellationToken);
+
+    /// <summary>FC16 Write Multiple Registers (raw values; no scaling or device rules here).</summary>
+    public Task<ModbusWriteResult> WriteMultipleRegistersAsync(byte unitId, int address, IReadOnlyList<ushort> values,
+        AddressBase addressBase = AddressBase.OneBased, CancellationToken cancellationToken = default) =>
+        WriteRegistersAsync(ModbusWriteRequest.Multiple(unitId, address, values, addressBase), cancellationToken);
+
+    /// <summary>
+    /// FC06 / FC16. Same path as a read: build PDU → transport (MBAP or RTU+CRC) → exception check → the response
+    /// must echo the request (FC06: address + value, FC16: address + quantity), otherwise InvalidResponse.
+    /// An invalid request (e.g. FC16 with 0 or more than 123 values) is rejected before anything is sent.
+    /// </summary>
+    public async Task<ModbusWriteResult> WriteRegistersAsync(ModbusWriteRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Function is not (ModbusFunction.WriteSingleRegister or ModbusFunction.WriteMultipleRegisters))
+            throw new ArgumentException($"{request.Function.ToShortName()} is not a register write.", nameof(request));
+
+        byte[] pdu;
+        ushort pduAddress;
+        try
+        {
+            pduAddress = request.PduAddress;
+            if (request.Function == ModbusFunction.WriteSingleRegister)
+            {
+                if (request.Values.Count != 1)
+                    throw new ArgumentException($"FC06 writes exactly one value, got {request.Values.Count}.", nameof(request));
+                pdu = ModbusPdu.BuildWriteSingleRegister(pduAddress, request.Values[0]);
+            }
+            else
+            {
+                pdu = ModbusPdu.BuildWriteMultipleRegisters(pduAddress, request.Values);
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            Logger.Log(LogKind.Fail, $"Invalid request: {ex.Message}");
+            return new ModbusWriteResult { Request = request, Status = ResultStatus.InvalidRequest, ErrorMessage = ex.Message };
+        }
+
+        string what = request.Function == ModbusFunction.WriteSingleRegister
+            ? $"Value = {request.Values[0]}"
+            : $"Quantity = {request.Quantity}  Values = {string.Join(", ", request.Values)}";
+        Logger.Log(LogKind.Tx,
+            $"{request.Function.ToShortName()}  {_transport?.UnitIdLabel ?? "Unit ID"} = {request.UnitId}  Address = {request.StartAddress} " +
+            $"(PDU 0x{pduAddress:X4}, {BaseText(request.AddressBase)})  {what}");
+
+        Exchange<bool> x = await ExchangeAsync(request.UnitId, pdu,
+            response =>
+            {
+                if (request.Function == ModbusFunction.WriteSingleRegister)
+                    ModbusPdu.ParseWriteSingleRegisterResponse(response, pduAddress, request.Values[0]);
+                else
+                    ModbusPdu.ParseWriteMultipleRegistersResponse(response, pduAddress, request.Quantity);
+                return true;
+            },
+            _ => { },
+            cancellationToken);
+
+        return new ModbusWriteResult
+        {
+            Request = request,
+            Status = x.Error?.Status ?? ResultStatus.Pass,
+            TxFrame = x.TxFrame,
+            RxFrame = x.RxFrame,
+            ElapsedMs = x.ElapsedMs,
+            ExceptionCode = (x.Error as ModbusSlaveException)?.Code,
+            ErrorMessage = x.Error?.Message,
+        };
+    }
+
+    private sealed record Exchange<T>(T? Value, ModbusCommException? Error, byte[]? TxFrame, byte[]? RxFrame, double ElapsedMs);
+
+    /// <summary>
+    /// One request/response, shared by reads and writes: send through the transport, log the raw frames and transport
+    /// details, parse the response PDU, then log Response Time. Failures are logged with a "Result:" line and returned
+    /// (never thrown); a successful exchange ends at Response Time.
+    /// </summary>
+    private async Task<Exchange<T>> ExchangeAsync<T>(byte unitId, byte[] pdu, Func<byte[], T> parse, Action<T> logParsed,
+        CancellationToken cancellationToken)
+    {
         if (_transport is null)
-            return Fail(request, new ModbusCommException(ResultStatus.NotConnected, "Not connected"), 0);
+        {
+            var notConnected = new ModbusCommException(ResultStatus.NotConnected, "Not connected");
+            LogFailure(notConnected, 0);
+            return new(default, notConnected, null, null, 0);
+        }
 
         var stopwatch = Stopwatch.StartNew();
         TransportReply? reply = null;
         try
         {
-            reply = await _transport.SendAsync(request.UnitId, pdu, cancellationToken);
+            reply = await _transport.SendAsync(unitId, pdu, cancellationToken);
             stopwatch.Stop();
             Logger.Log(LogKind.Tx, $"[{HexFormatter.Format(reply.TxFrame)}]");
             Logger.Log(LogKind.Rx, $"[{HexFormatter.Format(reply.RxFrame)}]");
             LogDetails(reply.Details);
 
-            ushort[] values = ModbusPdu.ParseReadRegistersResponse(request.Function, reply.Pdu, request.Quantity);
-            Logger.Log(LogKind.Rx, string.Join(", ", values));
+            T value = parse(reply.Pdu);
+            logParsed(value);
             Logger.Info($"Response Time: {stopwatch.Elapsed.TotalMilliseconds:F0} ms");
-            // A successful read ends the log at Response Time; only failures get a "Result:" line (see Fail).
-
-            return new ModbusResult
-            {
-                Request = request,
-                Status = ResultStatus.Pass,
-                Registers = values,
-                TxFrame = reply.TxFrame,
-                RxFrame = reply.RxFrame,
-                ElapsedMs = stopwatch.Elapsed.TotalMilliseconds,
-            };
+            // A successful exchange ends the log at Response Time; only failures get a "Result:" line.
+            return new(value, null, reply.TxFrame, reply.RxFrame, stopwatch.Elapsed.TotalMilliseconds);
         }
         catch (ModbusCommException ex)
         {
@@ -138,11 +234,12 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
             }
             ex.TxFrame ??= reply?.TxFrame;
             ex.RxFrame ??= reply?.RxFrame;
-            return Fail(request, ex, stopwatch.Elapsed.TotalMilliseconds);
+            LogFailure(ex, stopwatch.Elapsed.TotalMilliseconds);
+            return new(default, ex, ex.TxFrame, ex.RxFrame, stopwatch.Elapsed.TotalMilliseconds);
         }
     }
 
-    private ModbusResult Fail(ModbusRequest request, ModbusCommException ex, double elapsedMs)
+    private void LogFailure(ModbusCommException ex, double elapsedMs)
     {
         if (elapsedMs > 0)
             Logger.Info($"Response Time: {elapsedMs:F0} ms");
@@ -153,18 +250,9 @@ public sealed class ModbusService(CommunicationLogger logger) : IAsyncDisposable
             _ => "FAIL",
         };
         Logger.Log(LogKind.Fail, $"Result: {label} [{ex.Status}] - {ex.Message}");
-
-        return new ModbusResult
-        {
-            Request = request,
-            Status = ex.Status,
-            TxFrame = ex.TxFrame,
-            RxFrame = ex.RxFrame,
-            ElapsedMs = elapsedMs,
-            ExceptionCode = (ex as ModbusSlaveException)?.Code,
-            ErrorMessage = ex.Message,
-        };
     }
+
+    private static string BaseText(AddressBase addressBase) => addressBase == AddressBase.OneBased ? "1-based" : "0-based";
 
     private void LogDetails(IReadOnlyList<string>? details)
     {
