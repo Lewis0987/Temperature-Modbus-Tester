@@ -31,7 +31,7 @@ public enum ConnectionType
 /// <see cref="INotifyDataErrorInfo"/> (red border in WPF). Runtime settings are parsed from that text only
 /// at Connect / Read time, so an invalid field can never fall back to a previously valid value.
 /// </summary>
-public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorInfo, IAsyncDisposable
+public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorInfo, IAsyncDisposable, IRegisterWriteHost
 {
     private const int MaxLogEntries = 5000;
 
@@ -80,8 +80,25 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         SelectedParity = Parities.First(p => p.Value == Parity.Even);
         SelectedStopBits = StopBitsOptions[0];
         RefreshComPorts();
+        Write = new RegisterWriteViewModel(this);
         ValidateInputs();
     }
+
+    /// <summary>Register Write area (Phase 4C): its own ViewModel, sharing this connection, busy flag and log.</summary>
+    public RegisterWriteViewModel Write { get; }
+
+    ModbusService IRegisterWriteHost.Service => _service;
+    CommunicationLogger IRegisterWriteHost.Logger => _logger;
+    AddressBase IRegisterWriteHost.AddressBase => SelectedAddressBase?.Value ?? AddressBase.OneBased;
+    DeviceProfile IRegisterWriteHost.Profile => SelectedDeviceProfile;
+    CancellationToken IRegisterWriteHost.OperationToken => _operationCts.Token;
+
+    Parsed<int> IRegisterWriteHost.CurrentUnitId() => ConnectionType switch
+    {
+        ViewModels.ConnectionType.Tcp => InputValidator.UnitId(UnitIdText),
+        ViewModels.ConnectionType.Rtu => InputValidator.SlaveId(SlaveIdText),
+        _ => Parsed<int>.Fail("Select Modbus TCP or Modbus RTU."),
+    };
 
     // ---- Connection ----
 
@@ -207,12 +224,16 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     // Any edit re-validates immediately (red border + Connect/Read CanExecute), not only on Connect.
     partial void OnHostTextChanged(string value) => ValidateInputs();
     partial void OnPortTextChanged(string value) => ValidateInputs();
-    partial void OnUnitIdTextChanged(string value) => ValidateInputs();
+    partial void OnUnitIdTextChanged(string value) { ValidateInputs(); Write?.Refresh(); }
     partial void OnTimeoutTextChanged(string value) => ValidateInputs();
     partial void OnSelectedComPortChanged(string? value) => ValidateInputs();
-    partial void OnSlaveIdTextChanged(string value) => ValidateInputs();
+    partial void OnSlaveIdTextChanged(string value) { ValidateInputs(); Write?.Refresh(); }
     partial void OnRtuTimeoutTextChanged(string value) => ValidateInputs();
-    partial void OnSelectedAddressBaseChanged(Option<AddressBase> value) => ValidateInputs();
+    partial void OnSelectedAddressBaseChanged(Option<AddressBase> value) { ValidateInputs(); Write?.Refresh(); }
+
+    // The Write button follows the same connection state and busy flag as Read (no second source of truth).
+    partial void OnConnectionStateChanged(ConnectionState value) => Write?.RefreshCommands();
+    partial void OnIsBusyChanged(bool value) => Write?.RefreshCommands();
     partial void OnStartAddressTextChanged(string value) => ValidateInputs();
     partial void OnQuantityTextChanged(string value) => ValidateInputs();
     partial void OnDefaultScaleTextChanged(string value) => ValidateInputs();
@@ -231,6 +252,7 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         ClearLastResult();
         ValidateInputs();
         RefreshErrorPresentation();
+        Write?.Refresh();
     }
 
     // ---- Commands ----
@@ -439,6 +461,7 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         OnPropertyChanged(nameof(IsFunctionSelectable));
         ReadCommand.NotifyCanExecuteChanged();
         RebuildRows();
+        Write?.LoadProfile();
     }
 
     // ---- Validation (INotifyDataErrorInfo drives the WPF red border) ----

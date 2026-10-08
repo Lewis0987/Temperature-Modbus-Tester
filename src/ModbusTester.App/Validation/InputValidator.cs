@@ -72,6 +72,48 @@ public static class InputValidator
             : Parsed<double>.Fail($"Scale '{value}' is not a number (e.g. 0.01).");
     }
 
+    /// <summary>
+    /// Generic write values: comma-separated raw 16-bit words, each either decimal 0~65535 or hex 0x0~0xFFFF
+    /// (1–4 hex digits). Each item is judged on its own, so "15,0x0019" is allowed. No sign, no scale, no
+    /// engineering units – Generic Modbus does not know what the register means.
+    /// </summary>
+    public static Parsed<IReadOnlyList<ushort>> RawValues(string? text, int maxCount)
+    {
+        string value = text?.Trim() ?? "";
+        if (value.Length == 0)
+            return Parsed<IReadOnlyList<ushort>>.Fail("Raw Value is required.");
+        string[] items = value.Split(',');
+        if (items.Length > maxCount)
+            return Parsed<IReadOnlyList<ushort>>.Fail(maxCount == 1
+                ? "FC06 writes exactly one value (use FC16 for several)."
+                : $"At most {maxCount} values (got {items.Length}).");
+        var words = new List<ushort>(items.Length);
+        for (int i = 0; i < items.Length; i++)
+        {
+            string item = items[i].Trim();
+            if (item.Length == 0)
+                return Parsed<IReadOnlyList<ushort>>.Fail($"Value {i + 1} is empty.");
+            if (RawWord(item) is not { } word)
+                return Parsed<IReadOnlyList<ushort>>.Fail($"'{item}' is not a raw value: use decimal 0~65535 or hex 0x0000~0xFFFF.");
+            words.Add(word);
+        }
+        return new(words, null);
+    }
+
+    private static ushort? RawWord(string item)
+    {
+        if (item.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            string hex = item[2..];
+            return hex.Length is >= 1 and <= 4 && hex.All(char.IsAsciiHexDigit)
+                ? ushort.Parse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture)
+                : null;
+        }
+        return item.All(char.IsAsciiDigit) && ushort.TryParse(item, NumberStyles.None, CultureInfo.InvariantCulture, out ushort number)
+            ? number
+            : null;
+    }
+
     /// <summary>Plain decimal digits only (no sign, decimal point, exponent or thousands separator).</summary>
     private static Parsed<int> Integer(string? text, string name, int min, int max)
     {

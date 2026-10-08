@@ -29,6 +29,7 @@
     <!-- Shared test doubles from the Core test project -->
     <Compile Include="..\ModbusTester.Tests\FakeSerialChannel.cs" Link="Fakes\FakeSerialChannel.cs" />
     <Compile Include="..\ModbusTester.Tests\FakeModbusTcpSlave.cs" Link="Fakes\FakeModbusTcpSlave.cs" />
+    <Compile Include="..\ModbusTester.Tests\FakeRtuSlave.cs" Link="Fakes\FakeRtuSlave.cs" />
   </ItemGroup>
 
 </Project>

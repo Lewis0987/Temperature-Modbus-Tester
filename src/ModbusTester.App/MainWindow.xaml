@@ -52,6 +52,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="2*" />
             <RowDefinition Height="5" />
             <RowDefinition Height="3*" />
@@ -245,8 +246,102 @@
             </Grid>
         </GroupBox>
 
+        <!-- ===== Register Write (Phase 4C) =====
+             Follows the Device Profile: a profile lists its writable registers (FC06 only, engineering value / state);
+             Generic writes raw words with FC06 / FC16 at an Address in the current Address Base. Every preview,
+             validation message and hold reason comes from the Core (ProfileWriteService / RegisterWriteEncoder). -->
+        <GroupBox Grid.Row="2" Header="Register Write" IsEnabled="{Binding HasConnectionType}">
+            <Grid x:Name="WriteArea" DataContext="{Binding Write}">
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+
+                <StackPanel x:Name="WriteRow" Orientation="Horizontal">
+                    <Label Content="Function" />
+                    <ComboBox x:Name="ProfileWriteFunction" Width="205" ItemsSource="{Binding ProfileFunctions}"
+                              SelectedItem="{Binding ProfileFunction, Mode=OneWay}" IsEnabled="False"
+                              ToolTip="Device profile writes use FC06 only."
+                              Visibility="{Binding IsProfileMode, Converter={StaticResource BoolToVisibility}}" />
+                    <ComboBox x:Name="GenericWriteFunction" Width="205" ItemsSource="{Binding GenericFunctions}"
+                              SelectedItem="{Binding SelectedGenericFunction}"
+                              Visibility="{Binding IsGenericMode, Converter={StaticResource BoolToVisibility}}" />
+
+                    <Label Content="Register" Visibility="{Binding IsProfileMode, Converter={StaticResource BoolToVisibility}}" />
+                    <ComboBox x:Name="WriteRegister" Width="200" ItemsSource="{Binding WritableRegisters}"
+                              SelectedItem="{Binding SelectedRegister}" DisplayMemberPath="Text"
+                              Visibility="{Binding IsProfileMode, Converter={StaticResource BoolToVisibility}}" />
+                    <Label Content="Address" Visibility="{Binding IsGenericMode, Converter={StaticResource BoolToVisibility}}"
+                           ToolTip="Start address in the current Address Base (see Register Read)." />
+                    <TextBox x:Name="WriteAddress" Width="80" Text="{Binding GenericAddressText, UpdateSourceTrigger=PropertyChanged}"
+                             Visibility="{Binding IsGenericMode, Converter={StaticResource BoolToVisibility}}" />
+
+                    <Label Content="{Binding ValueLabel}" />
+                    <TextBox x:Name="WriteValue" Width="110" Text="{Binding ValueText, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding HasRegister}"
+                             Visibility="{Binding ShowNumericInput, Converter={StaticResource BoolToVisibility}}" />
+                    <ComboBox x:Name="WriteState" Width="110" ItemsSource="{Binding StateOptions}" SelectedItem="{Binding SelectedState}"
+                              Visibility="{Binding ShowStateInput, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBox x:Name="WriteRawValues" Width="200" Text="{Binding GenericValuesText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Decimal 0~65535 or hex 0x0000~0xFFFF; FC16: comma-separated, e.g. 15,25,0x0096 (Quantity = number of values)."
+                             Visibility="{Binding IsGenericMode, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock Text="{Binding UnitText}" VerticalAlignment="Center" Margin="0,0,4,0" MinWidth="30" />
+
+                    <Button x:Name="WriteButton" Content="Write" FontWeight="SemiBold" Command="{Binding WriteCommand}" />
+                    <Button x:Name="ResetToDefaultButton" Content="Reset to Default" Command="{Binding ResetToDefaultCommand}"
+                            ToolTip="Put the document default into the input. Nothing is sent until Write is confirmed."
+                            Visibility="{Binding IsProfileMode, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+
+                <!-- Metadata, preview (Core result) and status -->
+                <WrapPanel Grid.Row="1" Margin="4,2">
+                    <TextBlock Margin="0,0,16,0" Visibility="{Binding HasRegister, Converter={StaticResource BoolToVisibility}}">
+                        <Run Text="Range" Foreground="Gray" /> <Run Text="{Binding RangeText, Mode=OneWay}" />
+                        <Run Text="  Scale" Foreground="Gray" /> <Run Text="{Binding ScaleText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock x:Name="WritePreview" FontFamily="Consolas" Margin="0,0,16,0"
+                               Visibility="{Binding HasPreview, Converter={StaticResource BoolToVisibility}}">
+                        <Run Text="Value" Foreground="Gray" /> <Run Text="{Binding PreviewEngineering, Mode=OneWay}" />
+                        <Run Text="  Qty" Foreground="Gray" /> <Run Text="{Binding PreviewQuantity, Mode=OneWay}" />
+                        <Run Text="  Raw" Foreground="Gray" /> <Run Text="{Binding PreviewRaw, Mode=OneWay}" />
+                        <Run Text="  HEX" Foreground="Gray" /> <Run Text="{Binding PreviewHex, Mode=OneWay}" />
+                        <Run Text="  PDU" Foreground="Gray" /> <Run Text="{Binding PreviewPdu, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock x:Name="WriteStatusText" Text="{Binding StatusText}" FontWeight="SemiBold" Margin="0,0,10,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.Completed}">
+                                        <Setter Property="Foreground" Value="ForestGreen" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.ValidationError}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.WriteFailed}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.VerificationMismatch}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.VerificationFailed}">
+                                        <Setter Property="Foreground" Value="Firebrick" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static vm:WriteStatus.WriteOnHold}">
+                                        <Setter Property="Foreground" Value="DarkOrange" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock x:Name="WriteValidationMessage" Text="{Binding ValidationMessage}" Foreground="Firebrick" Margin="0,0,10,0" />
+                    <TextBlock x:Name="WriteHoldReason" Text="{Binding HoldReason}" Foreground="DarkOrange" TextWrapping="Wrap"
+                               Visibility="{Binding IsOnHold, Converter={StaticResource BoolToVisibility}}" />
+                </WrapPanel>
+            </Grid>
+        </GroupBox>
+
         <!-- ===== Result ===== -->
-        <GroupBox Grid.Row="2" Header="Registers (Scale is editable unless the device profile defines it)">
+        <GroupBox Grid.Row="3" Header="Registers (Scale is editable unless the device profile defines it)">
             <DataGrid x:Name="RegistersGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
                       CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None"
                       FontFamily="Consolas" BeginningEdit="RegistersGrid_BeginningEdit">
@@ -300,10 +395,10 @@
             </DataGrid>
         </GroupBox>
 
-        <GridSplitter Grid.Row="3" HorizontalAlignment="Stretch" Background="#DDD" />
+        <GridSplitter Grid.Row="4" HorizontalAlignment="Stretch" Background="#DDD" />
 
         <!-- ===== Log ===== -->
-        <GroupBox Grid.Row="4">
+        <GroupBox Grid.Row="5">
             <GroupBox.Header>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Communication Log" VerticalAlignment="Center" Margin="0,0,10,0" />
