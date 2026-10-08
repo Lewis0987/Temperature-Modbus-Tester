@@ -6,8 +6,8 @@ namespace ModbusTester.Core.Profiles;
 /// <summary>
 /// Siemens A6V12258321 – Room humidity and air quality sensors QFA2050/MO, QFA2050D/MO, QPA2052/MO,
 /// section 4.3 "Modbus registers" (holding registers, register numbers start at 1).
-/// Defined so far: measurement registers 1–6 (Phase 3A) and offset registers 223–225 (Phase 3B, read/decode only;
-/// writing them is a later phase). Registers 401, 764–766, 1286–1287 follow later.
+/// Defined so far: measurement registers 1–6 (Phase 3A), offset registers 223–225 (Phase 3B) and configuration
+/// registers 401, 764–766 (Phase 3C) – read/decode only, writing is a later phase. Registers 1286–1287 follow later.
 /// Not every sensor variant has every point; e.g. a model without CO2 may not provide registers 5/6/225.
 /// </summary>
 public static class A6V12258321Profile
@@ -15,6 +15,7 @@ public static class A6V12258321Profile
     public const string Name = "A6V12258321 (QFA/QPA)";
     public const string Measurement = "Measurement";
     public const string Offset = "Offset";
+    public const string Configuration = "Configuration";
 
     private static readonly IReadOnlyDictionary<ushort, RegisterState> Reliability = new Dictionary<ushort, RegisterState>
     {
@@ -22,7 +23,7 @@ public static class A6V12258321Profile
         [1] = new("Bad reliability, unavailable", "資料不可靠／無法使用"),
     };
 
-    public static DeviceProfile Profile { get; } = new(Name, "Siemens QFA2050/MO, QFA2050D/MO, QPA2052/MO – registers 1–6, 223–225",
+    public static DeviceProfile Profile { get; } = new(Name, "Siemens QFA2050/MO, QFA2050D/MO, QPA2052/MO – registers 1–6, 223–225, 401, 764–766",
     [
         // ---- Measurement (R) ----
         new RegisterDefinition
@@ -77,6 +78,55 @@ public static class A6V12258321Profile
             RegisterNumber = 225, Description = "CO2 offset", ChineseDescription = "CO₂ 偏移", Group = Offset,
             DataType = DataType.Int16, Scale = 1.0, Unit = "ppm", Min = -2000, Max = 2000,
             Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+        },
+
+        // ---- Configuration (RW, no scaling: Scale "-") ----
+        new RegisterDefinition
+        {
+            // Document: "others = invalid value to be discard" → shown as Unknown (n), never Celsius/Fahrenheit.
+            RegisterNumber = 401, Description = "System unit", ChineseDescription = "系統單位", Group = Configuration,
+            DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            States = new Dictionary<ushort, RegisterState>
+            {
+                [0] = new("Celsius", "攝氏"),
+                [1] = new("Fahrenheit", "華氏"),
+            },
+        },
+        new RegisterDefinition
+        {
+            // The document has an additional restriction on address 246 for this register; it concerns writing
+            // and is left to the FC06/FC16 phase. Here only read/decode/range.
+            RegisterNumber = 764, Description = "Modbus address", ChineseDescription = "Modbus 位址", Group = Configuration,
+            DataType = DataType.UInt16, Scale = null, Min = 1, Max = 247,
+            Access = RegisterAccess.ReadWrite, DefaultValue = 1,
+        },
+        new RegisterDefinition
+        {
+            RegisterNumber = 765, Description = "Baud rate", ChineseDescription = "鮑率", Group = Configuration,
+            DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            States = new Dictionary<ushort, RegisterState>
+            {
+                [0] = new("Auto", "自動"),
+                [1] = new("9600bps", "9600bps"),
+                [2] = new("19200bps", "19200bps"),
+                [3] = new("38400bps", "38400bps"),
+                [4] = new("57600bps", "57600bps"),
+                [5] = new("76800bps", "76800bps"),
+                [6] = new("115200bps", "115200bps"),
+            },
+        },
+        new RegisterDefinition
+        {
+            // Document: "Transmission format (start bits-data bits-parity-stop bits)".
+            RegisterNumber = 766, Description = "Transmission format", ChineseDescription = "傳輸格式（起始位元-資料位元-同位-停止位元）",
+            Group = Configuration, DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            States = new Dictionary<ushort, RegisterState>
+            {
+                [0] = new("1-8-E-1", "1-8-E-1"),
+                [1] = new("1-8-O-1", "1-8-O-1"),
+                [2] = new("1-8-N-1", "1-8-N-1"),
+                [3] = new("1-8-N-2", "1-8-N-2"),
+            },
         },
     ],
     // Section 4.3 is a "Holding Register (16-bit) No." table: always read with FC03.

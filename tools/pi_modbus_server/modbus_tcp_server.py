@@ -2,7 +2,7 @@
 r"""Modbus TCP test server for Modbus Tester (Phase 1.5).
 
 Runs on Windows or the Raspberry Pi (Temperature, 192.168.137.189) and serves the A6V12258321
-holding registers 1-6 and 223-225 for Unit ID 1 on port 5020.
+holding registers 1-6, 223-225, 401 and 764-766 for Unit ID 1 on port 5020.
 
 Addressing: the tester UI uses 1-based register numbers, the wire (PDU) is 0-based.
 
@@ -15,8 +15,12 @@ Addressing: the tester UI uses 1-based register numbers, the wire (PDU) is 0-bas
     Register 223 -> PDU 222 = 15     (+1.5 degC offset)
     Register 224 -> PDU 223 = 0xFFE7 (-25 -> -2.5 % offset, 16-bit two's complement)
     Register 225 -> PDU 224 = 150    (+150 ppm offset)
+    Register 401 -> PDU 400 = 0      (System unit: Celsius)
+    Register 764 -> PDU 763 = 1      (Modbus address 1)
+    Register 765 -> PDU 764 = 1      (Baud rate: 9600bps)
+    Register 766 -> PDU 765 = 0      (Transmission format: 1-8-E-1)
 
-The two blocks are separate: addresses in between (and any read crossing a gap or past the end)
+The register blocks are separate: addresses in between (and any read crossing a gap or past the end)
 return Modbus exception 02 (Illegal Data Address). Other Unit IDs get exception 04 (Slave Device
 Failure), which is pymodbus 3.15 behaviour. FC04 reads the same registers as FC03 (shared layout).
 
@@ -62,10 +66,22 @@ OFFSET_REGISTERS = [
     int16(150),    # Reg 225 CO2 offset               = 150 x 1.0 = 150 ppm   (-2000...2000)
 ]
 
+# Configuration (registers 401 and 764-766, RW in the document, read-only here). Enum-like, no scaling.
+SYSTEM_UNIT_REGISTER = [
+    0,      # Reg 401 System unit         = 0 Celsius (1 = Fahrenheit)
+]
+COMMUNICATION_REGISTERS = [
+    1,      # Reg 764 Modbus address      = 1         (1...247)
+    1,      # Reg 765 Baud rate           = 1 9600bps (0 Auto, 2 19200, 3 38400, 4 57600, 5 76800, 6 115200)
+    0,      # Reg 766 Transmission format = 0 1-8-E-1 (1 1-8-O-1, 2 1-8-N-1, 3 1-8-N-2)
+]
+
 # PDU start address -> values. Each entry is one SimData block; pymodbus treats the gaps as invalid.
 REGISTER_BLOCKS = {
-    0: HOLDING_REGISTERS,      # registers 1-6
-    222: OFFSET_REGISTERS,     # registers 223-225
+    0: HOLDING_REGISTERS,          # registers 1-6
+    222: OFFSET_REGISTERS,         # registers 223-225
+    400: SYSTEM_UNIT_REGISTER,     # register 401
+    763: COMMUNICATION_REGISTERS,  # registers 764-766
 }
 VALID_PDU_ADDRESSES = {start + i for start, values in REGISTER_BLOCKS.items() for i in range(len(values))}
 

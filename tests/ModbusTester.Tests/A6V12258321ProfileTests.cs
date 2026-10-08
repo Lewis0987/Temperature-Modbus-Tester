@@ -25,7 +25,7 @@ public class A6V12258321ProfileTests
     [Fact]
     public void Profile_DefinesRegisters_ByDocumentRegisterNumber()
     {
-        Assert.Equal([1, 2, 3, 4, 5, 6, 223, 224, 225], Profile.Registers.Select(r => r.RegisterNumber));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 223, 224, 225, 401, 764, 765, 766], Profile.Registers.Select(r => r.RegisterNumber));
         Assert.Equal("Temperature value", Profile.Find(0)!.Description);   // Register 1 = PDU 0
         Assert.Null(Profile.Find(6));                                 // Register 7 is not defined
         Assert.All(Profile.Registers.Where(r => r.Group == A6V12258321Profile.Measurement),
