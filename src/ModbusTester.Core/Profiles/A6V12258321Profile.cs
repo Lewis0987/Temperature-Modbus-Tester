@@ -7,7 +7,8 @@ namespace ModbusTester.Core.Profiles;
 /// Siemens A6V12258321 – Room humidity and air quality sensors QFA2050/MO, QFA2050D/MO, QPA2052/MO,
 /// section 4.3 "Modbus registers" (holding registers, register numbers start at 1).
 /// Defined so far: measurement registers 1–6 (Phase 3A), offset registers 223–225 (Phase 3B) and configuration
-/// registers 401, 764–766 (Phase 3C) and version registers 1286–1287 (Phase 3D) – read/decode only, writing is a later phase.
+/// registers 401, 764–766 (Phase 3C) and version registers 1286–1287 (Phase 3D). Write encoding/validation (Phase 4B) uses
+/// the same metadata via RegisterWriteEncoder / ProfileWriteService; single-register profile writes use FC06 only.
 /// Not every sensor variant has every point; e.g. a model without CO2 may not provide registers 5/6/225.
 /// </summary>
 public static class A6V12258321Profile
@@ -17,6 +18,13 @@ public static class A6V12258321Profile
     public const string Offset = "Offset";
     public const string Configuration = "Configuration";
     public const string Version = "Version";
+
+    /// <summary>
+    /// Why profile writes to 764–766 are encoded/validated but not sent yet: when new communication parameters take
+    /// effect, which settings the response uses and whether a reconnect is needed are not confirmed.
+    /// </summary>
+    public const string CommunicationWriteHold =
+        "Communication parameter writes are on hold: effect timing / reconnect behaviour not confirmed";
 
     private static readonly IReadOnlyDictionary<ushort, RegisterState> Reliability = new Dictionary<ushort, RegisterState>
     {
@@ -95,16 +103,19 @@ public static class A6V12258321Profile
         },
         new RegisterDefinition
         {
-            // The document has an additional restriction on address 246 for this register; it concerns writing
-            // and is left to the FC06/FC16 phase. Here only read/decode/range.
+            // 246 is inside 1…247 but reserved for on-event addressing: a write of 246 is rejected via ExcludedValues
+            // (reading 246 back is still only range-checked, nothing else is assumed).
             RegisterNumber = 764, Description = "Modbus address", ChineseDescription = "Modbus 位址", Group = Configuration,
             DataType = DataType.UInt16, Scale = null, Min = 1, Max = 247,
             Access = RegisterAccess.ReadWrite, DefaultValue = 1,
+            ExcludedValues = new Dictionary<double, string> { [246] = "Reserved for on-event addressing" },
+            WriteHoldReason = CommunicationWriteHold,
         },
         new RegisterDefinition
         {
             RegisterNumber = 765, Description = "Baud rate", ChineseDescription = "鮑率", Group = Configuration,
             DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            WriteHoldReason = CommunicationWriteHold,
             States = new Dictionary<ushort, RegisterState>
             {
                 [0] = new("Auto", "自動"),
@@ -121,6 +132,7 @@ public static class A6V12258321Profile
             // Document: "Transmission format (start bits-data bits-parity-stop bits)".
             RegisterNumber = 766, Description = "Transmission format", ChineseDescription = "傳輸格式（起始位元-資料位元-同位-停止位元）",
             Group = Configuration, DataType = DataType.Status, Access = RegisterAccess.ReadWrite, DefaultValue = 0,
+            WriteHoldReason = CommunicationWriteHold,
             States = new Dictionary<ushort, RegisterState>
             {
                 [0] = new("1-8-E-1", "1-8-E-1"),

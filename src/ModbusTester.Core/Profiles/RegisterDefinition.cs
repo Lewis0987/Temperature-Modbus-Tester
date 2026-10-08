@@ -47,6 +47,18 @@ public sealed record RegisterDefinition
 
     public bool IsWritable => Access is RegisterAccess.Write or RegisterAccess.ReadWrite;
 
+    /// <summary>
+    /// Engineering values that are inside <see cref="Min"/>…<see cref="Max"/> but must not be written by a master,
+    /// with the document's reason (e.g. Modbus address 246, reserved for on-event addressing).
+    /// </summary>
+    public IReadOnlyDictionary<double, string> ExcludedValues { get; init; } = new Dictionary<double, string>();
+
+    /// <summary>
+    /// When set, the register can be encoded and validated but a profile write is not sent yet, for the given reason
+    /// (e.g. the effect of writing communication parameters is not documented). Null = writes may be sent.
+    /// </summary>
+    public string? WriteHoldReason { get; init; }
+
     /// <summary>For <see cref="DataType.Status"/>: raw value → meaning. Values not listed are reported as unknown.</summary>
     public IReadOnlyDictionary<ushort, RegisterState> States { get; init; } = new Dictionary<ushort, RegisterState>();
 
