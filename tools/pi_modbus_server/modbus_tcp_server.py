@@ -2,7 +2,7 @@
 r"""Modbus TCP test server for Modbus Tester (Phase 1.5).
 
 Runs on Windows or the Raspberry Pi (Temperature, 192.168.137.189) and serves the A6V12258321
-holding registers 1-6, 223-225, 401 and 764-766 for Unit ID 1 on port 5020.
+holding registers 1-6, 223-225, 401, 764-766 and 1286-1287 for Unit ID 1 on port 5020.
 
 Addressing: the tester UI uses 1-based register numbers, the wire (PDU) is 0-based.
 
@@ -19,6 +19,8 @@ Addressing: the tester UI uses 1-based register numbers, the wire (PDU) is 0-bas
     Register 764 -> PDU 763 = 1      (Modbus address 1)
     Register 765 -> PDU 764 = 1      (Baud rate: 9600bps)
     Register 766 -> PDU 765 = 0      (Transmission format: 1-8-E-1)
+    Register 1286 -> PDU 1285 = 258  (SW version: Major & Minor versions, raw 0x0102)
+    Register 1287 -> PDU 1286 = 123  (SW version: Build version, raw 0x007B)
 
 The register blocks are separate: addresses in between (and any read crossing a gap or past the end)
 return Modbus exception 02 (Illegal Data Address). Other Unit IDs get exception 04 (Slave Device
@@ -76,12 +78,19 @@ COMMUNICATION_REGISTERS = [
     0,      # Reg 766 Transmission format = 0 1-8-E-1 (1 1-8-O-1, 2 1-8-N-1, 3 1-8-N-2)
 ]
 
+# Version (registers 1286-1287, R). Arbitrary easy-to-spot test values; the tester shows them as raw UInt16.
+VERSION_REGISTERS = [
+    258,    # Reg 1286 SW version: Major & Minor versions = 258 (0x0102)
+    123,    # Reg 1287 SW version: Build version          = 123 (0x007B)
+]
+
 # PDU start address -> values. Each entry is one SimData block; pymodbus treats the gaps as invalid.
 REGISTER_BLOCKS = {
     0: HOLDING_REGISTERS,          # registers 1-6
     222: OFFSET_REGISTERS,         # registers 223-225
     400: SYSTEM_UNIT_REGISTER,     # register 401
     763: COMMUNICATION_REGISTERS,  # registers 764-766
+    1285: VERSION_REGISTERS,       # registers 1286-1287
 }
 VALID_PDU_ADDRESSES = {start + i for start, values in REGISTER_BLOCKS.items() for i in range(len(values))}
 

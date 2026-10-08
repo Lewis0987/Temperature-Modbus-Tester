@@ -7,7 +7,7 @@ namespace ModbusTester.Core.Profiles;
 /// Siemens A6V12258321 – Room humidity and air quality sensors QFA2050/MO, QFA2050D/MO, QPA2052/MO,
 /// section 4.3 "Modbus registers" (holding registers, register numbers start at 1).
 /// Defined so far: measurement registers 1–6 (Phase 3A), offset registers 223–225 (Phase 3B) and configuration
-/// registers 401, 764–766 (Phase 3C) – read/decode only, writing is a later phase. Registers 1286–1287 follow later.
+/// registers 401, 764–766 (Phase 3C) and version registers 1286–1287 (Phase 3D) – read/decode only, writing is a later phase.
 /// Not every sensor variant has every point; e.g. a model without CO2 may not provide registers 5/6/225.
 /// </summary>
 public static class A6V12258321Profile
@@ -16,6 +16,7 @@ public static class A6V12258321Profile
     public const string Measurement = "Measurement";
     public const string Offset = "Offset";
     public const string Configuration = "Configuration";
+    public const string Version = "Version";
 
     private static readonly IReadOnlyDictionary<ushort, RegisterState> Reliability = new Dictionary<ushort, RegisterState>
     {
@@ -23,7 +24,7 @@ public static class A6V12258321Profile
         [1] = new("Bad reliability, unavailable", "資料不可靠／無法使用"),
     };
 
-    public static DeviceProfile Profile { get; } = new(Name, "Siemens QFA2050/MO, QFA2050D/MO, QPA2052/MO – registers 1–6, 223–225, 401, 764–766",
+    public static DeviceProfile Profile { get; } = new(Name, "Siemens QFA2050/MO, QFA2050D/MO, QPA2052/MO – registers 1–6, 223–225, 401, 764–766, 1286–1287",
     [
         // ---- Measurement (R) ----
         new RegisterDefinition
@@ -127,6 +128,20 @@ public static class A6V12258321Profile
                 [2] = new("1-8-N-1", "1-8-N-1"),
                 [3] = new("1-8-N-2", "1-8-N-2"),
             },
+        },
+
+        // ---- Version (R, no scaling) ----
+        // The register table gives no encoding for these words (e.g. how Major/Minor share register 1286), so the
+        // raw UInt16 is shown as-is; nothing is split or reformatted into "x.y".
+        new RegisterDefinition
+        {
+            RegisterNumber = 1286, Description = "SW version: Major & Minor versions", ChineseDescription = "軟體版本：主要與次要版本",
+            Group = Version, DataType = DataType.UInt16, Scale = null,
+        },
+        new RegisterDefinition
+        {
+            RegisterNumber = 1287, Description = "SW version: Build version", ChineseDescription = "軟體版本：建置版本",
+            Group = Version, DataType = DataType.UInt16, Scale = null,
         },
     ],
     // Section 4.3 is a "Holding Register (16-bit) No." table: always read with FC03.
