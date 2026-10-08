@@ -152,7 +152,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     // RTU start values, all selectable. 8E1 and Slave ID 1 are the Siemens QFA/QPA document defaults; 9600 is only the
     // tester's first attempt – the document's default baud rate is 0 = Auto (register 765).
     public ObservableCollection<string> ComPorts { get; } = [];
-    public IReadOnlyList<int> BaudRates { get; } = [9600, 19200, 38400, 57600, 115200];
+
+    /// <summary>
+    /// Real baud rates the PC serial port can open with – the fixed rates of the sensor's register 765 (9600…115200).
+    /// "Auto" is a sensor setting, not a serial port speed, so it is not offered. Selecting a rate here does not read or
+    /// write register 765, and reading 765 does not change the port.
+    /// </summary>
+    public IReadOnlyList<int> BaudRates { get; } = [9600, 19200, 38400, 57600, 76800, 115200];
     public IReadOnlyList<int> DataBitsOptions { get; } = [8];
     public IReadOnlyList<Option<Parity>> Parities { get; } =
         [new(Parity.None, "None"), new(Parity.Even, "Even"), new(Parity.Odd, "Odd")];
