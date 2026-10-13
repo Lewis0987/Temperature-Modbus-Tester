@@ -47,6 +47,22 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     /// Filled by profile reads and verified profile writes; cleared whenever the device may have changed.
     /// </summary>
     private readonly ProfileUnitContext _unitContext = new();
+
+    // Kept so shutdown can unsubscribe: nothing may update the UI after the window is gone.
+    private readonly EventHandler<ConnectionState> _onStateChanged;
+    private readonly EventHandler<LogEntry> _onEntryAdded;
+    private int _shutDown;
+
+    /// <summary>Window title with the version from the assembly, e.g. "Modbus Tester V1.0.0".</summary>
+    public string WindowTitle => AppInfo.Title;
+
+    /// <summary>Asks where to save the log (argument: suggested file name); null = cancelled. Replaced in tests.</summary>
+    internal Func<string, string?> PickLogFile { get; set; } = ShowSaveLogDialog;
+
+    /// <summary>Connection state of the Modbus service itself (for shutdown tests; the UI uses <see cref="ConnectionState"/>).</summary>
+    internal ConnectionState ServiceState => _service.State;
+
+    internal bool IsShutDown => Volatile.Read(ref _shutDown) != 0;
     private readonly List<FieldHistory> _histories = [];
     private CancellationTokenSource _operationCts = new();
 
@@ -60,8 +76,10 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     {
         _serialChannelFactory = serialChannelFactory;
         _service = new ModbusService(_logger);
-        _service.StateChanged += (_, state) => OnUiThread(() => ConnectionState = state);
-        _logger.EntryAdded += (_, entry) => OnUiThread(() => AppendLog(entry));
+        _onStateChanged = (_, state) => OnUiThread(() => ConnectionState = state);
+        _onEntryAdded = (_, entry) => OnUiThread(() => AppendLog(entry));
+        _service.StateChanged += _onStateChanged;
+        _logger.EntryAdded += _onEntryAdded;
 
         _historyStore = historyStore ?? new InputHistoryStore(InputHistoryStore.DefaultPath);
         Dictionary<string, List<string>> saved = _historyStore.Load();
@@ -476,7 +494,50 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     }
 
     [RelayCommand]
-    private void CopyLog() => Clipboard.SetText(string.Join(Environment.NewLine, LogEntries));
+    private void CopyLog() => Clipboard.SetText(CommunicationLogExport.BuildText(LogEntries));
+
+    /// <summary>
+    /// Saves the Communication Log as shown (UTF-8 text) to a file the user picks. Cancel writes nothing; an IO error
+    /// is reported in the log. The tester never writes log files on its own.
+    /// </summary>
+    [RelayCommand]
+    private void SaveLog()
+    {
+        if (LogEntries.Count == 0)
+        {
+            _logger.Info("Communication Log is empty: nothing saved");
+            return;
+        }
+        string text = CommunicationLogExport.BuildText(LogEntries);
+        int lines = LogEntries.Count;
+        string? path = PickLogFile(CommunicationLogExport.DefaultFileName(DateTime.Now));
+        if (string.IsNullOrWhiteSpace(path))
+            return;   // cancelled
+        try
+        {
+            CommunicationLogExport.Save(path, text);
+            _logger.Info($"Communication Log saved: {path} ({lines} lines)");
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException
+                                   or System.Security.SecurityException)
+        {
+            _logger.Error($"Save log failed: {ex.Message}");
+        }
+    }
+
+    private static string? ShowSaveLogDialog(string suggestedName)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Save Communication Log",
+            FileName = suggestedName,
+            DefaultExt = ".txt",
+            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+            AddExtension = true,
+            OverwritePrompt = true,
+        };
+        return dialog.ShowDialog(Application.Current?.MainWindow) == true ? dialog.FileName : null;
+    }
 
     /// <summary>
     /// Overwrites the Scale of every manually scaled row with Default Scale; rows stay individually editable
@@ -752,9 +813,19 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
             dispatcher.BeginInvoke(action);
     }
 
-    public ValueTask DisposeAsync()
+    /// <summary>
+    /// Window closing: runs once. Cancels any read / write in progress, stops all UI updates from the service and
+    /// the log, and releases the transport (TCP socket or serial port).
+    /// </summary>
+    public async Task ShutdownAsync()
     {
+        if (Interlocked.Exchange(ref _shutDown, 1) != 0)
+            return;
         _operationCts.Cancel();
-        return _service.DisposeAsync();
+        _service.StateChanged -= _onStateChanged;
+        _logger.EntryAdded -= _onEntryAdded;
+        await _service.DisposeAsync();
     }
+
+    public ValueTask DisposeAsync() => new(ShutdownAsync());
 }

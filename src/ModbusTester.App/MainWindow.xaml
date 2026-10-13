@@ -4,7 +4,7 @@
         xmlns:vm="clr-namespace:ModbusTester.App.ViewModels"
         xmlns:controls="clr-namespace:ModbusTester.App.Controls"
         xmlns:models="clr-namespace:ModbusTester.Core.Models;assembly=ModbusTester.Core"
-        Title="Modbus Tester" Height="860" Width="1100" MinHeight="600" MinWidth="900"
+        Title="{Binding WindowTitle, Mode=OneTime}" Height="860" Width="1100" MinHeight="600" MinWidth="900"
         FontFamily="Segoe UI" FontSize="13">
     <Window.DataContext>
         <vm:MainViewModel />
@@ -437,6 +437,8 @@
                     <TextBlock Text="Communication Log" VerticalAlignment="Center" Margin="0,0,10,0" />
                     <Button Content="Clear" Command="{Binding ClearLogCommand}" MinWidth="60" Padding="8,1" />
                     <Button Content="Copy" Command="{Binding CopyLogCommand}" MinWidth="60" Padding="8,1" />
+                    <Button x:Name="SaveLogButton" Content="Save..." Command="{Binding SaveLogCommand}" MinWidth="60" Padding="8,1"
+                            ToolTip="Save the Communication Log as shown to a UTF-8 text file" />
                 </StackPanel>
             </GroupBox.Header>
             <ListBox x:Name="LogList" ItemsSource="{Binding LogEntries}" FontFamily="Consolas" FontSize="12"

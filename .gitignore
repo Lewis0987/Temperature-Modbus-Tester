@@ -32,3 +32,9 @@ tools/pi_modbus_server/*.log
 # Runtime logs
 *.log
 
+# Release packages (dotnet publish output and zip, see README)
+artifacts/
+
+# Python bytecode (simulator)
+__pycache__/
+
