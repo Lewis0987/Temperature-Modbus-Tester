@@ -9,8 +9,10 @@ Exception 02 for a read-only write is this simulator's (pymodbus readonly flag) 
 the real Siemens sensor.
 """
 
+import math
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,8 @@ import time
 import unittest
 
 from pymodbus.client import ModbusTcpClient
+
+import modbus_tcp_server as server_module
 
 SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modbus_tcp_server.py")
 
@@ -29,6 +33,8 @@ DEFAULTS = {
     1286: 258, 1287: 123,
 }
 ILLEGAL_DATA_ADDRESS = 2
+SLAVE_DEVICE_FAILURE = 4
+GENERIC_UNIT = 2
 
 
 def free_port() -> int:
@@ -252,6 +258,129 @@ class RestartTests(unittest.TestCase):
                 for register, value in DEFAULTS.items():
                     rr = client.read_holding_registers(register - 1, count=1, device_id=1)
                     self.assertEqual([value], rr.registers, f"Register {register}")
+            finally:
+                client.close()
+                server.stop()
+
+
+def decode32(words, datatype, order):
+    """Independent of the server: the value of two wire words (letters = value bytes in wire order, A = MSB)."""
+    wire = struct.pack(">HH", *words)
+    value_bytes = bytes(wire[order.index(letter)] for letter in "ABCD")
+    if datatype == "UInt32":
+        return struct.unpack(">I", value_bytes)[0]
+    if datatype == "Int32":
+        return struct.unpack(">i", value_bytes)[0]
+    f = struct.unpack(">f", value_bytes)[0]
+    if math.isnan(f):
+        return "NaN"
+    if math.isinf(f):
+        return "+Infinity" if f > 0 else "-Infinity"
+    return f
+
+
+class GenericUnitTests(SimulatorTestCase):
+    """Unit 2: Generic 32-bit test device (simulator fixture, Phase 5C)."""
+
+    def read2(self, register: int, count: int = 1, unit: int = GENERIC_UNIT):
+        return self.client.read_holding_registers(register - 1, count=count, device_id=unit)
+
+    def values2(self, register: int, count: int = 1) -> list[int]:
+        rr = self.read2(register, count)
+        self.assertFalse(rr.isError(), rr)
+        return rr.registers
+
+    def test_fixture_table_decodes_as_documented(self):
+        # The fixture table itself is consistent (checked with struct, not with the tester's decoder)
+        for f in server_module.GENERIC32_FIXTURES:
+            with self.subTest(register=f.register):
+                self.assertEqual(f.expected, decode32(f.words, f.datatype, f.order))
+
+    def test_fixtures_are_served(self):
+        for f in server_module.GENERIC32_FIXTURES:
+            with self.subTest(register=f.register):
+                self.assertEqual(list(f.words), self.values2(f.register, 2))
+        self.assertEqual(34, len(self.values2(1, 34)))          # one contiguous read-only block 1-34
+
+    def test_uint32_four_orders_same_value(self):
+        for register, order in ((1, "ABCD"), (3, "BADC"), (5, "CDAB"), (7, "DCBA")):
+            with self.subTest(order=order):
+                self.assertEqual(305419896, decode32(self.values2(register, 2), "UInt32", order))
+
+    def test_fc04_reads_the_same_values(self):
+        rr = self.client.read_input_registers(0, count=2, device_id=GENERIC_UNIT)
+        self.assertFalse(rr.isError(), rr)
+        self.assertEqual([0x1234, 0x5678], rr.registers)
+
+    def test_writable_area_defaults(self):
+        self.assertEqual([0x0001, 0x0002], self.values2(101, 2))
+
+    def test_fc06_writable_area(self):
+        self.assertFalse(self.client.write_register(100, 0x1234, device_id=GENERIC_UNIT).isError())
+        self.assertEqual([0x1234, 0x0002], self.values2(101, 2))
+        self.assertFalse(self.client.write_register(100, 0x0001, device_id=GENERIC_UNIT).isError())
+        self.assertEqual([0x0001, 0x0002], self.values2(101, 2))
+
+    def test_fc16_writable_area(self):
+        self.assertFalse(self.client.write_registers(100, [0x1234, 0x5678], device_id=GENERIC_UNIT).isError())
+        self.assertEqual(305419896, decode32(self.values2(101, 2), "UInt32", "ABCD"))
+        self.assertFalse(self.client.write_registers(100, [0x0001, 0x0002], device_id=GENERIC_UNIT).isError())
+        self.assertEqual([0x0001, 0x0002], self.values2(101, 2))
+
+    def test_fixtures_read_only(self):
+        self.assert_exception(self.client.write_register(0, 0, device_id=GENERIC_UNIT))
+        self.assert_exception(self.client.write_registers(16, [0, 0], device_id=GENERIC_UNIT))
+        self.assertEqual([0x1234], self.values2(1))
+        self.assertEqual([0x3F80, 0x0000], self.values2(17, 2))
+
+    def test_gaps(self):
+        self.assert_exception(self.read2(35))                   # right after the fixtures
+        self.assert_exception(self.read2(100))                  # right before the writable area
+        self.assert_exception(self.read2(101, 3))               # past the writable area
+        self.assert_exception(self.client.write_registers(100, [1, 2, 3], device_id=GENERIC_UNIT))
+        self.assertEqual([0x0001, 0x0002], self.values2(101, 2))   # nothing written
+
+    def test_units_isolated(self):
+        # The same addresses hold different devices; writing one unit never changes the other
+        self.assertEqual([2534], self.values(1))
+        self.assertEqual([0x1234], self.values2(1))
+        self.assert_exception(self.read(101))                   # unit 1 has no register 101
+        self.assert_exception(self.read2(223))                  # unit 2 has no register 223
+        self.assertFalse(self.client.write_register(222, 20, device_id=1).isError())
+        self.assertEqual([0x1234, 0x5678], self.values2(1, 2))
+        self.assertFalse(self.client.write_register(222, 15, device_id=1).isError())
+        self.assert_exception(self.client.read_holding_registers(0, count=1, device_id=3), SLAVE_DEVICE_FAILURE)
+
+    def test_unit2_log_lines(self):
+        before = len(self.log_lines())
+        self.values2(1, 2)
+        self.client.write_register(100, 0x0001, device_id=GENERIC_UNIT)
+        lines = self.log_lines()[before:]
+        self.assertTrue(lines[0].endswith("Unit 2 FC03 Read  PDU 0..1 (Registers 1-2) -> [4660, 22136]"), lines[0])
+        self.assertTrue(lines[1].endswith("Unit 2 FC06 Write PDU 100 (Register 101) Value 1"), lines[1])
+
+
+class GenericUnitRestartTests(unittest.TestCase):
+    def test_restart_restores_unit2(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            log_file = os.path.join(tmp, "server.log")
+            port = free_port()
+            server = Server(port, log_file)
+            client = ModbusTcpClient("127.0.0.1", port=port, timeout=2)
+            try:
+                self.assertTrue(client.connect())
+                self.assertFalse(client.write_registers(100, [0xAAAA, 0xBBBB], device_id=GENERIC_UNIT).isError())
+            finally:
+                client.close()
+                server.stop()
+
+            server = Server(port, log_file)
+            client = ModbusTcpClient("127.0.0.1", port=port, timeout=2)
+            try:
+                self.assertTrue(client.connect())
+                self.assertEqual([0x0001, 0x0002], client.read_holding_registers(100, count=2, device_id=GENERIC_UNIT).registers)
+                self.assertEqual([0x1234, 0x5678], client.read_holding_registers(0, count=2, device_id=GENERIC_UNIT).registers)
+                self.assertEqual([2534], client.read_holding_registers(0, count=1, device_id=1).registers)
             finally:
                 client.close()
                 server.stop()

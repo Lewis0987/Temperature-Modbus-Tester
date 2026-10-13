@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-r"""Modbus TCP test server for Modbus Tester (Phase 1.5, write behaviour Phase 4D).
+r"""Modbus TCP test server for Modbus Tester (Phase 1.5, write behaviour Phase 4D, Unit 2 Phase 5C).
 
-Runs on Windows or the Raspberry Pi (Temperature, 192.168.137.189) and serves the A6V12258321
-holding registers 1-6, 223-225, 401, 764-766 and 1286-1287 for Unit ID 1 on port 5020.
+Runs on Windows or the Raspberry Pi (Temperature, 192.168.137.189) on port 5020 with two devices, chosen by
+the request's Unit ID:
+
+    Unit ID 1  A6V12258321 simulator: holding registers 1-6, 223-225, 401, 764-766 and 1286-1287 (below).
+    Unit ID 2  Generic 32-bit test device: a SIMULATOR TEST FIXTURE of UInt32 / Int32 / Float32 values in the four
+               byte orders plus a writable raw area (see GENERIC32_FIXTURES). Not a real device, not a profile.
+
+Unit 1 (A6V12258321 simulator):
 
 Addressing: the tester UI uses 1-based register numbers, the wire (PDU) is 0-based.
 
@@ -99,13 +105,16 @@ VERSION_REGISTERS = [
 
 
 class RegisterBlock(NamedTuple):
-    """One SimData block: consecutive registers with the same document access."""
+    """One SimData block: consecutive registers with the same access."""
     start: int            # 0-based PDU address of the first register
     values: list[int]     # default values (restored on every start)
-    readonly: bool        # True = document access R, False = RW
+    readonly: bool        # True = R, False = RW
 
 
-# Each entry is one SimData block; pymodbus treats the gaps as invalid (exception 02).
+# ---------------------------------------------------------------------------------------------------------------
+# Unit 1 (default --unit 1): A6V12258321 simulator. Each entry is one SimData block; pymodbus treats the gaps as
+# invalid (exception 02). Unchanged since Phase 4D.
+# ---------------------------------------------------------------------------------------------------------------
 REGISTER_BLOCKS = [
     RegisterBlock(0, HOLDING_REGISTERS, readonly=True),          # registers 1-6        R
     RegisterBlock(222, OFFSET_REGISTERS, readonly=False),        # registers 223-225    RW
@@ -113,8 +122,72 @@ REGISTER_BLOCKS = [
     RegisterBlock(763, COMMUNICATION_REGISTERS, readonly=False), # registers 764-766    RW (plain registers)
     RegisterBlock(1285, VERSION_REGISTERS, readonly=True),       # registers 1286-1287  R
 ]
-VALID_PDU_ADDRESSES = {b.start + i for b in REGISTER_BLOCKS for i in range(len(b.values))}
-READONLY_PDU_ADDRESSES = {b.start + i for b in REGISTER_BLOCKS if b.readonly for i in range(len(b.values))}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Unit 2 (--generic-unit 2): Generic 16/32-bit TEST DEVICE (Phase 5C). A simulator test fixture for the tester's
+# Generic 32-bit read - NOT a real device and NOT a device profile. Register = human 1-based number,
+# PDU = pymodbus 0-based address (Register - 1). Easy to check by hand:
+#
+#   Register  PDU      Word 1  Word 2  Type     Order  Decoded value
+#   1-2       0-1      1234    5678    UInt32   ABCD   0x12345678 = 305419896
+#   3-4       2-3      3412    7856    UInt32   BADC   0x12345678 = 305419896
+#   5-6       4-5      5678    1234    UInt32   CDAB   0x12345678 = 305419896
+#   7-8       6-7      7856    3412    UInt32   DCBA   0x12345678 = 305419896
+#   9-10      8-9      FFFF    FFFF    Int32    ABCD   -1
+#   11-12     10-11    FF85    FFFF    Int32    CDAB   -123        (0xFFFFFF85)
+#   13-14     12-13    8000    0000    Int32    ABCD   -2147483648 (Int32 min)
+#   15-16     14-15    FFFF    FF7F    Int32    DCBA   2147483647  (Int32 max, 0x7FFFFFFF)
+#   17-18     16-17    3F80    0000    Float32  ABCD   1.0
+#   19-20     18-19    803F    0000    Float32  BADC   1.0
+#   21-22     20-21    0000    3F80    Float32  CDAB   1.0
+#   23-24     22-23    0000    803F    Float32  DCBA   1.0
+#   25-26     24-25    BF80    0000    Float32  ABCD   -1.0
+#   27-28     26-27    3FC0    0000    Float32  ABCD   1.5
+#   29-30     28-29    7FC0    0000    Float32  ABCD   NaN
+#   31-32     30-31    7F80    0000    Float32  ABCD   +Infinity
+#   33-34     32-33    FF80    0000    Float32  ABCD   -Infinity
+#   101-102   100-101  0001    0002    writable raw area (any type; UInt32 ABCD = 0x00010002 = 65538)
+#
+# Registers 1-34 are read-only (a write gets exception 02, the simulator's read-only rule - not a statement about
+# any real device); 101-102 are RW for raw FC06 / FC16 tests; everything else is a gap (exception 02).
+# A restart restores all values.
+# ---------------------------------------------------------------------------------------------------------------
+class Fixture(NamedTuple):
+    """One 32-bit test value of Unit 2: where it is, its two wire words, and how it must decode."""
+    register: int                 # human register number of the first word (1-based)
+    words: tuple[int, int]        # wire order: first register, second register
+    datatype: str                 # "UInt32" | "Int32" | "Float32"
+    order: str                    # "ABCD" | "BADC" | "CDAB" | "DCBA"
+    expected: object              # int / float, or "NaN" / "+Infinity" / "-Infinity"
+
+
+GENERIC32_FIXTURES = [
+    Fixture(1, (0x1234, 0x5678), "UInt32", "ABCD", 305419896),
+    Fixture(3, (0x3412, 0x7856), "UInt32", "BADC", 305419896),
+    Fixture(5, (0x5678, 0x1234), "UInt32", "CDAB", 305419896),
+    Fixture(7, (0x7856, 0x3412), "UInt32", "DCBA", 305419896),
+    Fixture(9, (0xFFFF, 0xFFFF), "Int32", "ABCD", -1),
+    Fixture(11, (0xFF85, 0xFFFF), "Int32", "CDAB", -123),
+    Fixture(13, (0x8000, 0x0000), "Int32", "ABCD", -2147483648),
+    Fixture(15, (0xFFFF, 0xFF7F), "Int32", "DCBA", 2147483647),
+    Fixture(17, (0x3F80, 0x0000), "Float32", "ABCD", 1.0),
+    Fixture(19, (0x803F, 0x0000), "Float32", "BADC", 1.0),
+    Fixture(21, (0x0000, 0x3F80), "Float32", "CDAB", 1.0),
+    Fixture(23, (0x0000, 0x803F), "Float32", "DCBA", 1.0),
+    Fixture(25, (0xBF80, 0x0000), "Float32", "ABCD", -1.0),
+    Fixture(27, (0x3FC0, 0x0000), "Float32", "ABCD", 1.5),
+    Fixture(29, (0x7FC0, 0x0000), "Float32", "ABCD", "NaN"),
+    Fixture(31, (0x7F80, 0x0000), "Float32", "ABCD", "+Infinity"),
+    Fixture(33, (0xFF80, 0x0000), "Float32", "ABCD", "-Infinity"),
+]
+GENERIC32_WRITABLE_REGISTER = 101          # human register number of the writable raw area (PDU 100)
+GENERIC32_WRITABLE = [0x0001, 0x0002]      # registers 101-102 defaults
+
+GENERIC32_BLOCKS = [
+    RegisterBlock(0, [w for f in GENERIC32_FIXTURES for w in f.words], readonly=True),                    # 1-34    R
+    RegisterBlock(GENERIC32_WRITABLE_REGISTER - 1, GENERIC32_WRITABLE, readonly=False),                    # 101-102 RW
+]
 
 FUNCTION_NAMES = {1: "FC01", 2: "FC02", 3: "FC03", 4: "FC04", 5: "FC05", 6: "FC06", 15: "FC15", 16: "FC16"}
 WRITE_FUNCTIONS = {6, 16}
@@ -129,44 +202,74 @@ def describe_span(address: int, count: int) -> str:
     return f"PDU {address}..{address + count - 1} (Registers {address + 1}-{address + count})"
 
 
-def write_outcome(address: int, count: int) -> str | None:
-    """Why pymodbus will reject this write (it checks every register before writing any), or None."""
-    span = range(address, address + count)
-    if any(a not in VALID_PDU_ADDRESSES for a in span):
-        return "Exception 02 Illegal Data Address (no register at this address)"
-    if any(a in READONLY_PDU_ADDRESSES for a in span):
-        return "Exception 02 Illegal Data Address (read-only register in this simulator)"
-    return None
+class DeviceSpec:
+    """One simulated Modbus device (Unit ID): its blocks and the access log callback that knows which unit it is."""
 
+    def __init__(self, name: str, blocks: list[RegisterBlock]):
+        self.name = name
+        self.blocks = blocks
+        self.valid = {b.start + i for b in blocks for i in range(len(b.values))}
+        self.readonly = {b.start + i for b in blocks if b.readonly for i in range(len(b.values))}
 
-async def log_access(function_code, start_address, address, count, current_registers, set_values):
-    """Called by pymodbus before every register access; logs it as one Read or one Write line.
-
-    pymodbus 3.15 answers FC06 by writing (set_values = [value]) and then reading the register back to build the
-    echo response (set_values = None, function code still 6). That internal read is not a client request and is
-    not logged, so one FC06 gives exactly one Write line. Returning None leaves the decision to pymodbus.
-    """
-    name = FUNCTION_NAMES.get(function_code, f"FC{function_code:02d}")
-    if function_code in WRITE_FUNCTIONS:
-        if set_values is None:
-            return None   # FC06 echo read-back inside pymodbus
-        values = ", ".join(str(v) for v in set_values)
-        label = "Value" if count == 1 else "Values"
-        line = f"{name} Write {describe_span(address, count)} {label} {values}"
-        if (rejected := write_outcome(address, count)) is not None:
-            log.warning("%s -> %s, nothing written", line, rejected)
-        else:
-            log.info("%s", line)
+    def write_outcome(self, address: int, count: int) -> str | None:
+        """Why pymodbus will reject this write (it checks every register before writing any), or None."""
+        span = range(address, address + count)
+        if any(a not in self.valid for a in span):
+            return "Exception 02 Illegal Data Address (no register at this address)"
+        if any(a in self.readonly for a in span):
+            return "Exception 02 Illegal Data Address (read-only register in this simulator)"
         return None
 
-    span = describe_span(address, count)
-    if any(a not in VALID_PDU_ADDRESSES for a in range(address, address + count)):
-        # Gap or past the end: pymodbus answers this with exception 02 after the action returns.
-        log.warning("%s Read  %s -> Exception 02 Illegal Data Address", name, span)
-    else:
-        offset = address - start_address
-        log.info("%s Read  %s -> %s", name, span, current_registers[offset:offset + count])
-    return None
+    def action(self, unit_id: int):
+        """The pymodbus action for this device (pymodbus does not pass the unit to the action, so it is bound here)."""
+        prefix = f"Unit {unit_id} "
+
+        async def log_access(function_code, start_address, address, count, current_registers, set_values):
+            """Called by pymodbus before every register access; logs it as one Read or one Write line.
+
+            pymodbus 3.15 answers FC06 by writing (set_values = [value]) and then reading the register back to build
+            the echo response (set_values = None, function code still 6). That internal read is not a client request
+            and is not logged, so one FC06 gives exactly one Write line. Returning None leaves the decision to pymodbus.
+            """
+            name = FUNCTION_NAMES.get(function_code, f"FC{function_code:02d}")
+            if function_code in WRITE_FUNCTIONS:
+                if set_values is None:
+                    return None   # FC06 echo read-back inside pymodbus
+                values = ", ".join(str(v) for v in set_values)
+                label = "Value" if count == 1 else "Values"
+                line = f"{prefix}{name} Write {describe_span(address, count)} {label} {values}"
+                if (rejected := self.write_outcome(address, count)) is not None:
+                    log.warning("%s -> %s, nothing written", line, rejected)
+                else:
+                    log.info("%s", line)
+                return None
+
+            span = describe_span(address, count)
+            if any(a not in self.valid for a in range(address, address + count)):
+                # Gap or past the end: pymodbus answers this with exception 02 after the action returns.
+                log.warning("%s%s Read  %s -> Exception 02 Illegal Data Address", prefix, name, span)
+            else:
+                offset = address - start_address
+                log.info("%s%s Read  %s -> %s", prefix, name, span, current_registers[offset:offset + count])
+            return None
+
+        return log_access
+
+    def build(self, unit_id: int) -> SimDevice:
+        # Fresh lists from the defaults on every start: writes live in memory only.
+        data = [SimData(address=b.start, values=list(b.values), datatype=DataType.REGISTERS, readonly=b.readonly)
+                for b in self.blocks]
+        # Shared layout: the blocks serve all tables, so FC04 returns the same values as FC03.
+        # (pymodbus 3.15 does not accept empty blocks in the 4-table non-shared layout.)
+        return SimDevice(id=unit_id, simdata=data, action=self.action(unit_id))
+
+
+A6V_DEVICE = DeviceSpec("A6V12258321 simulator", REGISTER_BLOCKS)
+GENERIC32_DEVICE = DeviceSpec("Generic 32-bit test device (fixture)", GENERIC32_BLOCKS)
+
+# Unit 1 sets, kept under their previous names
+VALID_PDU_ADDRESSES = A6V_DEVICE.valid
+READONLY_PDU_ADDRESSES = A6V_DEVICE.readonly
 
 
 class UnknownUnitFilter(logging.Filter):
@@ -182,20 +285,19 @@ class UnknownUnitFilter(logging.Filter):
         return True
 
 
-def build_device(unit_id: int) -> SimDevice:
-    # Fresh lists from the defaults on every start: writes live in memory only.
-    blocks = [SimData(address=b.start, values=list(b.values), datatype=DataType.REGISTERS, readonly=b.readonly)
-              for b in REGISTER_BLOCKS]
-    # Shared layout: the register blocks serve all tables, so FC04 returns the same values as FC03.
-    # (pymodbus 3.15 does not accept empty blocks in the 4-table non-shared layout.)
-    return SimDevice(id=unit_id, simdata=blocks, action=log_access)
+def build_devices(unit_id: int, generic_unit_id: int) -> list[SimDevice]:
+    """Both devices on one server: requests are routed by Unit ID (unknown IDs: exception 04)."""
+    if unit_id == generic_unit_id:
+        raise SystemExit(f"--unit and --generic-unit must differ (both {unit_id})")
+    return [A6V_DEVICE.build(unit_id), GENERIC32_DEVICE.build(generic_unit_id)]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Modbus TCP test server for Modbus Tester")
     parser.add_argument("--host", default="0.0.0.0", help="listen address (default 0.0.0.0)")
     parser.add_argument("--port", type=int, default=5020, help="listen port (default 5020)")
-    parser.add_argument("--unit", type=int, default=1, help="Unit ID (default 1)")
+    parser.add_argument("--unit", type=int, default=1, help="Unit ID of the A6V12258321 simulator (default 1)")
+    parser.add_argument("--generic-unit", type=int, default=2, help="Unit ID of the Generic 32-bit test device (default 2)")
     parser.add_argument("--debug", action="store_true", help="show pymodbus frame-level debug log")
     parser.add_argument("--log-file", help="also append the log to this file")
     parser.add_argument("--error-log-file", help="also append warnings and errors to this file")
@@ -235,8 +337,9 @@ def ensure_port_free(host: str, port: int) -> None:
 
 async def main(args: argparse.Namespace) -> None:
     ensure_port_free(args.host, args.port)
-    log.info("Server Start: PID %d, pymodbus %s, listening on %s:%d, Unit ID %d",
-             os.getpid(), pymodbus_version, args.host, args.port, args.unit)
+    devices = build_devices(args.unit, args.generic_unit)
+    log.info("Server Start: PID %d, pymodbus %s, listening on %s:%d, Unit ID %d (A6V12258321) + Unit ID %d (Generic 32-bit test)",
+             os.getpid(), pymodbus_version, args.host, args.port, args.unit, args.generic_unit)
     for block in REGISTER_BLOCKS:
         access = "R " if block.readonly else "RW"
         for i, value in enumerate(block.values):
@@ -245,8 +348,12 @@ async def main(args: argparse.Namespace) -> None:
             note = f", signed {signed}" if signed != value else ""
             log.info("  %s Register %d (PDU %d) = %d (0x%04X%s)", access, pdu + 1, pdu, value, value, note)
 
+    log.info("  Unit %d: %d read-only 32-bit fixtures at registers 1-34, writable raw registers %d-%d = %s",
+             args.generic_unit, len(GENERIC32_FIXTURES), GENERIC32_WRITABLE_REGISTER,
+             GENERIC32_WRITABLE_REGISTER + len(GENERIC32_WRITABLE) - 1, ", ".join(f"0x{v:04X}" for v in GENERIC32_WRITABLE))
+
     # Runs until the process is stopped (Ctrl+C in the foreground, Stop_ModbusTCP.ps1 in the background).
-    await StartAsyncTcpServer(context=build_device(args.unit), address=(args.host, args.port))
+    await StartAsyncTcpServer(context=devices, address=(args.host, args.port))
 
 
 if __name__ == "__main__":
