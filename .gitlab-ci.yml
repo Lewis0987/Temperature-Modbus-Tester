@@ -9,11 +9,14 @@ variables:
 test:
   stage: test
   tags:
-    - windows
-    - dotnet
+    - windows-gui,windows,dotnet
   script:
     - dotnet --version
+    - python --version
     - dotnet restore "ModbusTester.slnx"
+    - python -m venv "tools/pi_modbus_server/.venv"
+    - '& "tools/pi_modbus_server/.venv/Scripts/python.exe" -m pip install --upgrade pip'
+    - '& "tools/pi_modbus_server/.venv/Scripts/python.exe" -m pip install "pymodbus==3.15.0"'
     - dotnet test "ModbusTester.slnx" --configuration Release --no-restore
 
 build:
