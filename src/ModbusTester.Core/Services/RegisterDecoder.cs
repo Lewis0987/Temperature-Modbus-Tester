@@ -245,7 +245,7 @@ public static class RegisterDecoder
             throw new ArgumentException("Status needs a definition (state table).", nameof(type));
         int count = RegisterCount(type);
         if (words.Length < count)
-            return Incomplete(address, pduAddress, words, null, scale);
+            return Incomplete(address, pduAddress, words, null, scale) with { DataType = type, Order32 = order };
         ushort[] used = words[..count].ToArray();
         uint? bits = count == 2 ? Combine32(used[0], used[1], order) : null;
         double decoded = Decode(used, type, order);
@@ -254,13 +254,21 @@ public static class RegisterDecoder
             return new DecodedRegister
             {
                 Address = address, PduAddress = pduAddress, Raw = used[0], SecondWord = used.Length > 1 ? used[1] : null, Bits32 = bits, Integer = integer,
-                Scale = scale, ValueText = text, Quality = RegisterQuality.InvalidValue,
+                Scale = scale, ValueText = text, Quality = RegisterQuality.InvalidValue, DataType = type, Order32 = order,
             };
         double value = ScaleValue(type, decoded, scale);
         return new DecodedRegister
         {
             Address = address, PduAddress = pduAddress, Raw = used[0], SecondWord = used.Length > 1 ? used[1] : null, Bits32 = bits, Integer = integer,
-            Scale = scale, Value = value, ValueText = RegisterFormat.Number(value),
+            Scale = scale, Value = value, ValueText = RegisterFormat.Number(value), DataType = type, Order32 = order,
         };
+    }
+
+    /// <summary>A generic row decoded again with another manual scale (same words, data type and order).</summary>
+    public static DecodedRegister Rescale(DecodedRegister generic, double scale)
+    {
+        if (generic.Definition is not null)
+            throw new ArgumentException("Profile rows use the document scale.", nameof(generic));
+        return DecodeGeneric(generic.Address, generic.PduAddress, [.. generic.Words], generic.DataType, generic.Order32, scale);
     }
 }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using ModbusTester.Core.Profiles;
+using ModbusTester.Core.Services;
 
 namespace ModbusTester.Core.Models;
 
@@ -35,6 +36,13 @@ public sealed record DecodedRegister
 
     /// <summary>The 32-bit pattern after the register order (A = most significant byte); null for 16-bit values.</summary>
     public uint? Bits32 { get; init; }
+
+    /// <summary>
+    /// Data type and 32-bit order the value was decoded with (generic rows: the user's choice; profile rows: see
+    /// <see cref="Definition"/>). Lets a generic row be re-scaled with exactly the same decoding.
+    /// </summary>
+    public DataType DataType { get; init; } = DataType.UInt16;
+    public Register32Order Order32 { get; init; } = Register32Order.ABCD;
 
     /// <summary>Number of registers this value occupies on the wire.</summary>
     public int RegisterCount => Words.Count;

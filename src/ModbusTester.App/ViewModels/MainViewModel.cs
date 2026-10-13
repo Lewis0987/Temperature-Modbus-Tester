@@ -82,6 +82,8 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         DefaultScaleHistory = Track(HistoryKeys.DefaultScale, v => DefaultScaleText = v);
 
         SelectedFunction = Functions[0];
+        SelectedGenericDataType = GenericDataTypes[0];
+        SelectedRegister32Order = Register32Orders[0];
         SelectedAddressBase = AddressBases[0];
         SelectedParity = Parities.First(p => p.Value == Parity.Even);
         SelectedStopBits = StopBitsOptions[0];
@@ -208,6 +210,38 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         new(AddressBase.OneBased, "1-based (Register No. 1 → PDU 0)"),
         new(AddressBase.ZeroBased, "0-based (PDU address)"),
     ];
+
+    /// <summary>Generic Modbus only: how the registers read are decoded (UInt16 = the original behaviour).</summary>
+    public IReadOnlyList<Option<DataType>> GenericDataTypes { get; } =
+    [
+        new(DataType.UInt16, "UInt16"),
+        new(DataType.Int16, "Int16"),
+        new(DataType.UInt32, "UInt32"),
+        new(DataType.Int32, "Int32"),
+        new(DataType.Float32, "Float32"),
+    ];
+
+    /// <summary>Byte arrangement of 32-bit values over two registers (Generic, 32-bit data types only).</summary>
+    public IReadOnlyList<Option<Register32Order>> Register32Orders { get; } =
+    [
+        new(Register32Order.ABCD, "ABCD"),
+        new(Register32Order.BADC, "BADC"),
+        new(Register32Order.CDAB, "CDAB"),
+        new(Register32Order.DCBA, "DCBA"),
+    ];
+
+    /// <summary>
+    /// Generic decoding choice; it only changes how the received registers are decoded – never the function or the
+    /// Quantity (always registers). Kept while a profile is selected, but a profile never uses it.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOrderEnabled))]
+    private Option<DataType> _selectedGenericDataType;
+
+    [ObservableProperty] private Option<Register32Order> _selectedRegister32Order;
+
+    /// <summary>The Order box only applies to a Generic 32-bit data type.</summary>
+    public bool IsOrderEnabled => IsGenericProfile && RegisterDecoder.Is32Bit(SelectedGenericDataType.Value);
 
     [ObservableProperty] private Option<ModbusFunction> _selectedFunction;
     [ObservableProperty] private Option<AddressBase> _selectedAddressBase;
@@ -459,6 +493,31 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
             row.Scale = scale.Value;
     }
 
+    /// <summary>
+    /// The one place a read is decoded for the table (rebuild and verified-write sync): a profile decodes by its
+    /// definitions; Generic by the chosen data type / 32-bit order. All decoding is done by the Core.
+    /// </summary>
+    private IReadOnlyList<DecodedRegister> DecodeLastRead(IReadOnlyList<ModbusResult> results, double defaultScale)
+    {
+        double ScaleFor(int address) => _scales.GetValueOrDefault(address, defaultScale);
+        return IsGenericProfile
+            ? RegisterService.DecodeGeneric(results, SelectedGenericDataType.Value, SelectedRegister32Order.Value, ScaleFor)
+            : RegisterService.Decode(results, SelectedDeviceProfile, ScaleFor);
+    }
+
+    // Changing how Generic registers are decoded re-decodes the last read (no new request), like a profile change.
+    partial void OnSelectedGenericDataTypeChanged(Option<DataType> value)
+    {
+        if (IsGenericProfile)
+            RebuildRows();
+    }
+
+    partial void OnSelectedRegister32OrderChanged(Option<Register32Order> value)
+    {
+        if (IsGenericProfile && RegisterDecoder.Is32Bit(SelectedGenericDataType.Value))
+            RebuildRows();
+    }
+
     /// <summary>Decodes the last successful read with the selected profile (also used when the profile changes).</summary>
     private void RebuildRows()
     {
@@ -467,7 +526,7 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         if (_lastRead is not var (results, defaultScale))
             return;
         // Merged and sorted by register, whatever order the requests completed in.
-        IReadOnlyList<DecodedRegister> decoded = RegisterService.Decode(results, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale));
+        IReadOnlyList<DecodedRegister> decoded = DecodeLastRead(results, defaultScale);
         foreach (DecodedRegister register in decoded)
             Rows.Add(new RegisterRowViewModel(register, (a, scale) => _scales[a] = scale));
         SoftwareVersionText = SoftwareVersion.Find(decoded)?.ToString() ?? "";
@@ -521,10 +580,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
             .Any(d => d.UnitSelectorRegister is { } n && verified.ContainsKey(n - 1));
         if (!unitSelectorWritten)
             _lastRead = (patched, defaultScale);
-        IReadOnlyList<DecodedRegister> decoded = RegisterService.Decode(patched, SelectedDeviceProfile, a => _scales.GetValueOrDefault(a, defaultScale));
+        // Re-decoded from the patched read, so a 32-bit row always gets both of its words (the written one and the
+        // one read before) – never an old 32-bit value next to a new word.
+        IReadOnlyList<DecodedRegister> decoded = DecodeLastRead(patched, defaultScale);
         for (int i = 0; i < Rows.Count; i++)
         {
-            if (!verified.ContainsKey(Rows[i].PduAddress))
+            int first = Rows[i].PduAddress;
+            if (!Enumerable.Range(first, Rows[i].RegisterCount).Any(verified.ContainsKey))
                 continue;
             DecodedRegister? register = decoded.FirstOrDefault(d => d.PduAddress == Rows[i].PduAddress);
             if (register is not null)
@@ -554,6 +616,7 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
 
         OnPropertyChanged(nameof(IsGenericProfile));
         OnPropertyChanged(nameof(IsFunctionSelectable));
+        OnPropertyChanged(nameof(IsOrderEnabled));
         ReadCommand.NotifyCanExecuteChanged();
         RebuildRows();
         _unitContext.Clear();       // another profile: its selector registers / meanings may differ

@@ -195,6 +195,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Label Content="Function" />
@@ -213,7 +214,19 @@
                                            Visibility="{Binding IsGenericProfile, Converter={StaticResource BoolToVisibility}}">
                         <TextBox Text="{Binding QuantityText, UpdateSourceTrigger=PropertyChanged}" />
                     </controls:HistoryField>
-                    <Button Grid.Column="6" Content="Read" FontWeight="SemiBold" Command="{Binding ReadCommand}" IsDefault="True" />
+                    <!-- Generic only: how the registers read are decoded. Quantity stays the number of registers; Order applies
+                         to 32-bit types only (disabled, not collapsed, for 16-bit so nothing moves). Profiles use their definitions. -->
+                    <StackPanel x:Name="GenericDecodePanel" Grid.Column="6" Orientation="Horizontal"
+                                Visibility="{Binding IsGenericProfile, Converter={StaticResource BoolToVisibility}}">
+                        <Label Content="Data Type" />
+                        <ComboBox x:Name="GenericDataType" Width="80" ItemsSource="{Binding GenericDataTypes}" SelectedItem="{Binding SelectedGenericDataType}"
+                                  ToolTip="Generic Modbus: decode the registers read as this type (32-bit types use 2 registers per value)." />
+                        <Label Content="Order" />
+                        <ComboBox x:Name="Register32Order" Width="64" ItemsSource="{Binding Register32Orders}" SelectedItem="{Binding SelectedRegister32Order}"
+                                  IsEnabled="{Binding IsOrderEnabled}"
+                                  ToolTip="Byte order of a 32-bit value (A = most significant byte, as the bytes appear on the wire)." />
+                    </StackPanel>
+                    <Button Grid.Column="7" Content="Read" FontWeight="SemiBold" Command="{Binding ReadCommand}" IsDefault="True" />
                 </Grid>
 
                 <Grid Grid.Row="1">
@@ -365,10 +378,11 @@
                             </Style>
                         </DataGridTextColumn.ElementStyle>
                     </DataGridTextColumn>
-                    <DataGridTextColumn Header="Raw" Binding="{Binding Raw}" IsReadOnly="True" Width="65" />
-                    <DataGridTextColumn Header="Decimal" Binding="{Binding Decimal}" IsReadOnly="True" Width="70" />
-                    <DataGridTextColumn Header="HEX" Binding="{Binding Hex}" IsReadOnly="True" Width="50" />
-                    <DataGridTextColumn Header="Binary" Binding="{Binding Binary}" IsReadOnly="True" Width="165" />
+                    <!-- 32-bit rows: Raw = both words as read ("1234 5678"), HEX / Binary = the 32-bit value (Core-formatted). -->
+                    <DataGridTextColumn Header="Raw" Binding="{Binding RawText}" IsReadOnly="True" Width="Auto" MinWidth="65" />
+                    <DataGridTextColumn Header="Decimal" Binding="{Binding Decimal}" IsReadOnly="True" Width="Auto" MinWidth="70" />
+                    <DataGridTextColumn Header="HEX" Binding="{Binding Hex}" IsReadOnly="True" Width="Auto" MinWidth="50" />
+                    <DataGridTextColumn Header="Binary" Binding="{Binding Binary}" IsReadOnly="True" Width="Auto" MinWidth="165" />
                     <!-- Profile-defined rows: document scale ("-" for status registers), grey and not editable. -->
                     <DataGridTextColumn x:Name="ScaleColumn" Header="Scale" Width="60"
                                         Binding="{Binding ScaleText, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}">
@@ -395,6 +409,15 @@
                                     <DataTrigger Binding="{Binding Quality}" Value="{x:Static models:RegisterQuality.UnknownState}">
                                         <Setter Property="Foreground" Value="Firebrick" />
                                         <Setter Property="ToolTip" Value="Value not defined in the device document" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Quality}" Value="{x:Static models:RegisterQuality.InvalidValue}">
+                                        <Setter Property="Foreground" Value="DarkOrange" />
+                                        <Setter Property="ToolTip" Value="Float32 NaN / Infinity: not a usable value (the read itself succeeded)" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Quality}" Value="{x:Static models:RegisterQuality.Incomplete}">
+                                        <Setter Property="Foreground" Value="Gray" />
+                                        <Setter Property="FontStyle" Value="Italic" />
+                                        <Setter Property="ToolTip" Value="Only one register of this 32-bit value was read (Quantity counts registers)" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>

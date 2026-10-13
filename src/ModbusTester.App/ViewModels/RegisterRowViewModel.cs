@@ -20,6 +20,12 @@ public sealed partial class RegisterRowViewModel(DecodedRegister register, Actio
     public string ChineseDescription => _register.ChineseDescription;
     public ushort Raw => _register.Raw;
 
+    /// <summary>Raw column: the register value (16-bit, decimal as before) or both words as read, e.g. "1234 5678" (32-bit).</summary>
+    public string RawText => _register.RegisterCount == 2 ? _register.RawWordsText : _register.Raw.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Registers the row covers (2 for a 32-bit value), starting at <see cref="PduAddress"/>.</summary>
+    public int RegisterCount => _register.RegisterCount;
+
     /// <summary>Raw after sign conversion (e.g. -1234 for an Int16 temperature), before scaling.</summary>
     public long Decimal => _register.Integer;
 
@@ -61,12 +67,14 @@ public sealed partial class RegisterRowViewModel(DecodedRegister register, Actio
         {
             if (!IsScaleEditable || _register.Scale == value)
                 return;
-            _register = RegisterDecoder.DecodeGeneric(_register.Address, _register.PduAddress, _register.Raw, value);
+            // Same words, data type and 32-bit order – only the manual scale changes (decoding stays in the Core).
+            _register = RegisterDecoder.Rescale(_register, value);
             scaleChanged(Address, value);
             OnPropertyChanged();
             OnPropertyChanged(nameof(ScaleText));
             OnPropertyChanged(nameof(Value));
             OnPropertyChanged(nameof(ValueText));
+            OnPropertyChanged(nameof(Quality));
         }
     }
 }

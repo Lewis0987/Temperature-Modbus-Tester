@@ -474,3 +474,53 @@ public class Register32A6VRegressionTests
         Assert.Equal(ProfileWriteError.UnsupportedDataType,
             RegisterWriteEncoder.Encode(new RegisterDefinition { RegisterNumber = 1, Description = "f", DataType = DataType.Float32, Access = RegisterAccess.ReadWrite }, 1.0).Error);
 }
+
+/// <summary>Phase 5B core additions: generic decoding of whole reads by data type, and re-scaling a generic row.</summary>
+public class Generic32CoreApiTests
+{
+    private static ModbusResult Result(int address, params ushort[] registers) => new()
+    {
+        Request = new ModbusRequest(ModbusFunction.ReadHoldingRegisters, 1, address, (ushort)registers.Length),
+        Status = ResultStatus.Pass,
+        Registers = registers,
+    };
+
+    [Fact]
+    public void UInt16_IdenticalToPreviousGenericDecode()
+    {
+        ModbusResult r = Result(100, 0x1234, 0x5678, 0xFFFE);
+        Assert.Equal(RegisterService.Decode(r, DeviceProfile.Generic, a => a == 101 ? 0.5 : 1),
+            RegisterService.DecodeGeneric([r], DataType.UInt16, Register32Order.CDAB, a => a == 101 ? 0.5 : 1));
+    }
+
+    [Fact]
+    public void Float32_PairsPerRequest_OddTailIncomplete()
+    {
+        IReadOnlyList<DecodedRegister> rows = RegisterService.DecodeGeneric(
+            [Result(200, 0x4000, 0x0000), Result(100, 0x3F80, 0x0000, 0x4120)], DataType.Float32, Register32Order.ABCD, _ => 1);
+        Assert.Equal([100, 102, 200], rows.Select(r => r.Address));                       // sorted by register
+        Assert.Equal(["1", "Incomplete", "2"], rows.Select(r => r.ValueText));
+        Assert.Equal([2, 1, 2], rows.Select(r => r.RegisterCount));
+        Assert.All(rows, r => Assert.Equal(DataType.Float32, r.DataType));
+    }
+
+    [Fact]
+    public void ScalePerFirstRegister()
+    {
+        IReadOnlyList<DecodedRegister> rows = RegisterService.DecodeGeneric([Result(100, 0, 100, 0, 200)], DataType.UInt32, Register32Order.ABCD,
+            a => a == 102 ? 0.5 : 1);
+        Assert.Equal(["100", "100"], rows.Select(r => r.ValueText));
+    }
+
+    [Fact]
+    public void Rescale_KeepsWordsTypeAndOrder()
+    {
+        DecodedRegister row = RegisterService.DecodeGeneric([Result(100, 0x0000, 0x3FC0)], DataType.Float32, Register32Order.CDAB, _ => 1).Single();
+        DecodedRegister scaled = RegisterDecoder.Rescale(row, 0.1);
+        Assert.Equal(("0.15", Register32Order.CDAB, "3FC00000", "0000 3FC0"), (scaled.ValueText, scaled.Order32, scaled.Hex, scaled.RawWordsText));
+        DecodedRegister incomplete = RegisterDecoder.Rescale(RegisterDecoder.DecodeGeneric(1, 0, [0x1234], DataType.Int32, Register32Order.ABCD, 1), 2);
+        Assert.Equal(RegisterQuality.Incomplete, incomplete.Quality);
+        Assert.Equal(RegisterDecoder.DecodeGeneric(1, 0, 2534, 0.01), RegisterDecoder.Rescale(RegisterDecoder.DecodeGeneric(1, 0, 2534, 1), 0.01));
+        Assert.Throws<ArgumentException>(() => RegisterDecoder.Rescale(RegisterDecoder.DecodeEngineering(1, 0, 2534, A6V12258321Profile.Profile.Find(0)!), 1));
+    }
+}

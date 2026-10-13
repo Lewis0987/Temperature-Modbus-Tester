@@ -42,6 +42,33 @@ public static class RegisterService
         return all.SelectMany(r => Decode(r, profile, manualScaleFor, read)).OrderBy(r => r.PduAddress).ToArray();
     }
 
+    /// <summary>
+    /// Generic decoding (no profile) of whole reads as <paramref name="type"/>: each request's registers are taken
+    /// <see cref="RegisterDecoder.RegisterCount"/> at a time from its start (Quantity = registers, never values), one row
+    /// per value at the address of its first register. A trailing word that cannot complete a 32-bit value is an
+    /// <see cref="RegisterQuality.Incomplete"/> row – never padded or dropped. UInt16 gives exactly the previous rows.
+    /// </summary>
+    public static IReadOnlyList<DecodedRegister> DecodeGeneric(IEnumerable<ModbusResult> results, DataType type, Register32Order order,
+        Func<int, double> manualScaleFor)
+    {
+        int count = RegisterDecoder.RegisterCount(type);
+        var rows = new List<DecodedRegister>();
+        foreach (ModbusResult result in results)
+        {
+            ushort startPdu = result.Request.PduAddress;
+            ushort[] words = [.. result.Registers];
+            for (int i = 0; i < words.Length; i += count)
+            {
+                int address = ModbusAddress.Display(result.Request.StartAddress, i);
+                var pdu = (ushort)(startPdu + i);
+                rows.Add(type == DataType.UInt16
+                    ? RegisterDecoder.DecodeGeneric(address, pdu, words[i], manualScaleFor(address))
+                    : RegisterDecoder.DecodeGeneric(address, pdu, words.AsSpan(i, Math.Min(count, words.Length - i)), type, order, manualScaleFor(address)));
+            }
+        }
+        return rows.OrderBy(r => r.PduAddress).ToArray();
+    }
+
     /// <param name="manualScaleFor">Scale for registers without a definition, by user-facing address.</param>
     public static IReadOnlyList<DecodedRegister> Decode(ModbusResult result, DeviceProfile profile, Func<int, double> manualScaleFor) =>
         Decode(result, profile, manualScaleFor, RawByPdu([result]));
