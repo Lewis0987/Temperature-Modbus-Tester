@@ -1,0 +1,30 @@
+stages:
+  - test
+  - build
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "true"
+
+test:
+  stage: test
+  tags:
+    - windows
+    - dotnet
+  script:
+    - dotnet --version
+    - dotnet restore "ModbusTester.slnx"
+    - dotnet test "ModbusTester.slnx" --configuration Release --no-restore
+
+build:
+  stage: build
+  tags:
+    - windows
+    - dotnet
+  script:
+    - dotnet restore "src/ModbusTester.App/ModbusTester.App.csproj"
+    - dotnet publish "src/ModbusTester.App/ModbusTester.App.csproj" --configuration Release --output "publish"
+  artifacts:
+    paths:
+      - publish/
+    expire_in: 14 days
