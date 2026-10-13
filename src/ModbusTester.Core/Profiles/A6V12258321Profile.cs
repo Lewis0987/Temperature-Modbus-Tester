@@ -92,7 +92,11 @@ public static class A6V12258321Profile
             // -180...180 °F (scale 0.1). Like register 1 the unit and range follow 401 and the value is never
             // converted, but whether the sensor really outputs a °F offset × 10 with 401 = 1 is not proven yet
             // (the real sensor's offset was 0, which reads the same in both units).
-            // Writes still use the °C range above (the write path has no 401 context yet).
+            // Writes use the unit / range of the 401 state read from the device (Phase 4F-1.1, ProfileUnitContext);
+            // without a known 401 a write is refused.
+            // Phase 4F-2 – PHYSICALLY VERIFIED, scope limited to (2026-10-13, real sensor, 401 = 0 / Celsius):
+            // profile FC06 0 → +0.1 °C (raw 1) → 0, echo, FC03 verify and final profile read all PASS.
+            // Not verified: other values / the full range, and the °F behaviour above.
             RegisterNumber = 223, Description = "Temperature offset", ChineseDescription = "溫度偏移", Group = Offset,
             DataType = DataType.Int16, Scale = 0.1, Unit = "°C", Min = -100, Max = 100,
             Access = RegisterAccess.ReadWrite, DefaultValue = 0,
@@ -105,6 +109,8 @@ public static class A6V12258321Profile
         },
         new RegisterDefinition
         {
+            // Phase 4F-2 – PHYSICALLY VERIFIED, scope limited to (2026-10-13, real sensor): profile FC06
+            // 0 → +0.1 % (raw 1) → 0, echo, FC03 verify and final profile read all PASS. Other values not tested.
             RegisterNumber = 224, Description = "Relative humidity offset", ChineseDescription = "相對濕度偏移", Group = Offset,
             DataType = DataType.Int16, Scale = 0.1, Unit = "%", Min = -100, Max = 100,
             Access = RegisterAccess.ReadWrite, DefaultValue = 0,
@@ -112,6 +118,8 @@ public static class A6V12258321Profile
         new RegisterDefinition
         {
             // Document Scaling 1.0 (unlike register 5, whose Scaling is "-"): shown as "1".
+            // Physical write PENDING / do not write: on the real sensor Reg 5 read 57005 (outside 0…2000 ppm) with
+            // Reg 6 = 1 (bad reliability, unavailable); its exact model / CO2 capability is not confirmed yet.
             RegisterNumber = 225, Description = "CO2 offset", ChineseDescription = "CO₂ 偏移", Group = Offset,
             DataType = DataType.Int16, Scale = 1.0, Unit = "ppm", Min = -2000, Max = 2000,
             Access = RegisterAccess.ReadWrite, DefaultValue = 0,

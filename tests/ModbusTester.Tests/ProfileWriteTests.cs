@@ -476,3 +476,59 @@ public class ProfileWriteServiceTests
         Assert.Equal(["01 06 00 DE 00 0F A9 F4"], rtu.Requests.Select(HexFormatter.Format));
     }
 }
+
+/// <summary>
+/// Phase 4F-2 physical evidence (2026-10-13, real sensor over RTU, 401 = 0 / Celsius): the frames recorded in the
+/// basic write / verify / restore of Reg 223 (+0.1 °C) and Reg 224 (+0.1 %). The tester must produce exactly these
+/// requests, and the recorded responses must pass CRC and parse to the recorded raw values.
+/// Scope is these values only – not the full range, not Reg 223 °F, not Reg 225.
+/// </summary>
+public class PhysicalWriteEvidenceTests
+{
+    private static readonly DeviceProfile A6V = A6V12258321Profile.Profile;
+    private static readonly IReadOnlyDictionary<int, ushort> Celsius = new Dictionary<int, ushort> { [401] = 0 };
+
+    private static byte[] Bytes(string hex) => [.. hex.Split(' ').Select(b => Convert.ToByte(b, 16))];
+
+    // register, input, raw, FC06 Tx (= recorded echo Rx), verify FC03 Tx, verify Rx
+    public static TheoryData<int, string, ushort, string, string, string> Recorded => new()
+    {
+        { 223, "0.1", 1, "01 06 00 DE 00 01 28 30", "01 03 00 DE 00 01 E4 30", "01 03 02 00 01 79 84" },
+        { 223, "0",   0, "01 06 00 DE 00 00 E9 F0", "01 03 00 DE 00 01 E4 30", "01 03 02 00 00 B8 44" },
+        { 224, "0.1", 1, "01 06 00 DF 00 01 79 F0", "01 03 00 DF 00 01 B5 F0", "01 03 02 00 01 79 84" },
+        { 224, "0",   0, "01 06 00 DF 00 00 B8 30", "01 03 00 DF 00 01 B5 F0", "01 03 02 00 00 B8 44" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Recorded))]
+    public void Recorded_RequestsAndResponses(int register, string input, ushort raw, string fc06, string verifyTx, string verifyRx)
+    {
+        ProfileWriteResult prepared = ProfileWriteService.Prepare(A6V, 1, register, AddressBase.OneBased, input, Celsius);
+        Assert.Equal(ProfileWriteError.None, prepared.Error);
+        Assert.Equal([raw], prepared.Request!.Values);
+        Assert.Equal(fc06, HexFormatter.Format(ModbusRtuFrame.Build(1, ModbusPdu.BuildWriteSingleRegister(prepared.Request.PduAddress, raw))));
+        Assert.Equal(verifyTx, HexFormatter.Format(ModbusRtuFrame.Build(1, ModbusPdu.BuildReadRequest(ModbusFunction.ReadHoldingRegisters, prepared.Request.PduAddress, 1))));
+
+        var details = new List<string>();
+        ModbusPdu.ParseWriteSingleRegisterResponse(ModbusRtuFrame.Validate(Bytes(fc06), 1, details), prepared.Request.PduAddress, raw);   // echo
+        Assert.Equal([raw], ModbusPdu.ParseReadRegistersResponse(ModbusFunction.ReadHoldingRegisters, ModbusRtuFrame.Validate(Bytes(verifyRx), 1, details), 1));
+        Assert.Equal(2, details.Count(d => d.EndsWith("CRC PASS")));
+    }
+
+    [Fact]
+    public async Task WriteAndRestore_OverRtu_SendsTheRecordedFrames()
+    {
+        var rtu = new FakeRtuSlave();
+        var channel = new FakeSerialChannel { Responder = rtu.Respond };
+        await using var service = new ModbusService(new CommunicationLogger());
+        Assert.True(await service.ConnectAsync(new ModbusRtuTransport(new RtuSettings("COM3"), _ => channel)));
+        var writer = new ProfileWriteService(service);
+
+        foreach ((int register, string input) in new[] { (223, "0.1"), (223, "0"), (224, "0.1"), (224, "0") })
+            Assert.True((await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input, Celsius)).IsSuccess);
+
+        Assert.Equal(["01 06 00 DE 00 01 28 30", "01 06 00 DE 00 00 E9 F0", "01 06 00 DF 00 01 79 F0", "01 06 00 DF 00 00 B8 30"],
+            rtu.Requests.Select(HexFormatter.Format));
+        Assert.Equal([0, 0], rtu.Registers[222..224]);                                     // both restored
+    }
+}
