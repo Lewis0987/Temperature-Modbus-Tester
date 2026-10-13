@@ -52,6 +52,15 @@ public class RegisterWriteViewModelTests
         vm.Write.Confirm = c => { h.Confirmations.Add(c); return h.Answer; };
         await vm.ConnectCommand.ExecuteAsync(null);
         Assert.True(vm.IsConnected);
+        if (!profile.IsGeneric)
+        {
+            // Like a user before a profile write: read up to 401 so the System unit of this device is known
+            // (Phase 4F-1.1). That read is not part of what the tests below count.
+            vm.StartAddressText = "401";
+            await vm.ReadCommand.ExecuteAsync(null);
+            Assert.True(vm.LastResultPassed);
+            slave.ReceivedAdus.Clear();
+        }
         return h;
     }
 
@@ -89,9 +98,9 @@ public class RegisterWriteViewModelTests
     [InlineData(224, "-100", "-100 %", "64536", "FC18", "0x00DF")]
     [InlineData(225, "150", "150 ppm", "150", "0096", "0x00E0")]
     [InlineData(225, "-2000", "-2000 ppm", "63536", "F830", "0x00E0")]
-    public void Profile_NumericPreview(int register, string input, string engineering, string raw, string hex, string pdu)
+    public async Task Profile_NumericPreview(int register, string input, string engineering, string raw, string hex, string pdu)
     {
-        Harness h = Offline(A6V);
+        await using Harness h = await ConnectAsync(A6V);
         Select(h.W, register);
         h.W.ValueText = input;
 
@@ -110,9 +119,9 @@ public class RegisterWriteViewModelTests
     [InlineData(224, "%", "-100 ~ 100", "0.1")]
     [InlineData(225, "ppm", "-2000 ~ 2000", "1")]
     [InlineData(764, "", "1 ~ 247", "-")]
-    public void Profile_ShowsMetadata(int register, string unit, string range, string scale)
+    public async Task Profile_ShowsMetadata(int register, string unit, string range, string scale)
     {
-        Harness h = Offline(A6V);
+        await using Harness h = await ConnectAsync(A6V);
         Select(h.W, register);
         Assert.Equal(unit, h.W.UnitText);
         Assert.Equal(range, h.W.RangeText);
@@ -128,9 +137,9 @@ public class RegisterWriteViewModelTests
     [InlineData(225, "2001", "outside")]                  // Test 8
     [InlineData(225, "1.5", "not a multiple of 1")]
     [InlineData(223, "abc", "not a number")]
-    public void Profile_ValidationMessage_FromCore(int register, string input, string message)
+    public async Task Profile_ValidationMessage_FromCore(int register, string input, string message)
     {
-        Harness h = Offline(A6V);
+        await using Harness h = await ConnectAsync(A6V);
         Select(h.W, register);
         h.W.ValueText = input;
 
@@ -259,7 +268,7 @@ public class RegisterWriteViewModelTests
     public async Task WriteButton_EnabledOnlyWhenEverythingIsValid()
     {
         Harness offline = Offline(A6V);
-        Select(offline.W, 223);
+        Select(offline.W, 224);
         offline.W.ValueText = "1.5";
         Assert.Equal(WriteStatus.Ready, offline.W.Status);
         Assert.False(offline.W.WriteCommand.CanExecute(null));      // not connected
@@ -434,7 +443,8 @@ public class RegisterWriteViewModelTests
     public async Task ReadBack_Timeout_IsVerificationFailure()
     {
         var rtu = new FakeRtuSlave { Registers = DeviceMap() };
-        var channel = new FakeSerialChannel { Responder = frame => frame[1] == 0x03 ? [] : rtu.Respond(frame) };
+        bool silenceReads = false;
+        var channel = new FakeSerialChannel { Responder = frame => silenceReads && frame[1] == 0x03 ? [] : rtu.Respond(frame) };
         var vm = new MainViewModel(_ => channel, TestVm.TempStore())
         {
             IsRtu = true, SelectedComPort = "COM_TEST", RtuTimeoutText = "200", SelectedDeviceProfile = A6V,
@@ -443,6 +453,10 @@ public class RegisterWriteViewModelTests
         vm.Write.Confirm = _ => true;
         await vm.ConnectCommand.ExecuteAsync(null);
         Assert.True(vm.IsConnected);
+        vm.StartAddressText = "401";                                   // System unit known first
+        await vm.ReadCommand.ExecuteAsync(null);
+        rtu.Requests.Clear();
+        silenceReads = true;
         Select(h.W, 223);
         h.W.ValueText = "1.5";
 

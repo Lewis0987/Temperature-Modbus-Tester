@@ -31,8 +31,31 @@ public sealed class ProfileWriteService(ModbusService modbus)
 {
     public const ModbusFunction WriteFunction = ModbusFunction.WriteSingleRegister;
 
+    /// <summary>
+    /// The definition a write must use: for a register whose unit follows a selector (Reg 223 ← System unit 401) the
+    /// unit and range of the selector state that is known for this device (<paramref name="unitContext"/>, see
+    /// <see cref="ProfileUnitContext"/>). Unlike a read, a write never falls back to the document default: if the
+    /// device's selector state is not known (not read yet / unknown state), the write is refused.
+    /// Only unit and range change – the value is still encoded as value / scale, never converted.
+    /// </summary>
+    public static (RegisterDefinition? Definition, string? Error) ResolveForWrite(DeviceProfile profile, RegisterDefinition definition,
+        IReadOnlyDictionary<int, ushort>? unitContext)
+    {
+        if (definition.UnitSelectorRegister is not { } selector)
+            return (definition, null);
+        string selectorText = $"Register {selector} ({profile.Find((ushort)(selector - 1))?.Description ?? "unit selector"})";
+        if (unitContext is null || !unitContext.TryGetValue(selector, out ushort state))
+            return (null, $"Register {definition.RegisterNumber} ({definition.Description}) depends on {selectorText}, which has not been " +
+                          $"read from this device yet: read Register {selector} first (e.g. profile read up to Address {selector}).");
+        if (!definition.UnitVariants.ContainsKey(state))
+            return (null, $"{selectorText} = {state} is not a known state: Register {definition.RegisterNumber} cannot be written.");
+        return (definition.ForUnitState(state), null);
+    }
+
     /// <summary>Validates and encodes without sending. <paramref name="address"/> is in the user's Address Base.</summary>
-    public static ProfileWriteResult Prepare(DeviceProfile profile, byte unitId, int address, AddressBase addressBase, string? input)
+    /// <param name="unitContext">Known selector states of this device (register number → raw), e.g. 401 → 1.</param>
+    public static ProfileWriteResult Prepare(DeviceProfile profile, byte unitId, int address, AddressBase addressBase, string? input,
+        IReadOnlyDictionary<int, ushort>? unitContext = null)
     {
         ushort pduAddress;
         try
@@ -49,6 +72,14 @@ public sealed class ProfileWriteService(ModbusService modbus)
                 Error = ProfileWriteError.RegisterNotDefined,
                 Message = $"Address {address} ({BaseText(addressBase)}) is not a register of {profile.Name}.",
             };
+
+        if (definition.IsWritable)
+        {
+            (RegisterDefinition? resolved, string? contextError) = ResolveForWrite(profile, definition, unitContext);
+            if (resolved is null)
+                return new ProfileWriteResult { Error = ProfileWriteError.UnitContextUnknown, Definition = definition, Message = contextError! };
+            definition = resolved;
+        }
 
         RegisterWriteEncoding encoding = RegisterWriteEncoder.Encode(definition, input);
         if (!encoding.IsValid)
@@ -71,9 +102,9 @@ public sealed class ProfileWriteService(ModbusService modbus)
 
     /// <summary>Validates, encodes and – only if everything passed – sends one FC06 write.</summary>
     public async Task<ProfileWriteResult> WriteAsync(DeviceProfile profile, byte unitId, int address, AddressBase addressBase, string? input,
-        CancellationToken cancellationToken = default)
+        IReadOnlyDictionary<int, ushort>? unitContext = null, CancellationToken cancellationToken = default)
     {
-        ProfileWriteResult prepared = Prepare(profile, unitId, address, addressBase, input);
+        ProfileWriteResult prepared = Prepare(profile, unitId, address, addressBase, input, unitContext);
         if (prepared.Error != ProfileWriteError.None)
             return prepared;
 

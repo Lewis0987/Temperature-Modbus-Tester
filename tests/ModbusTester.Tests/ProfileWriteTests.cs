@@ -277,6 +277,9 @@ public class ProfileWriteServiceTests
 {
     private static readonly DeviceProfile A6V = A6V12258321Profile.Profile;
 
+    /// <summary>The device's System unit as read before writing (Phase 4F-1.1: Reg 223 needs a known 401).</summary>
+    private static readonly IReadOnlyDictionary<int, ushort> Celsius = new Dictionary<int, ushort> { [401] = 0 };
+
     private static async Task<(ProfileWriteService Writer, ModbusService Service, FakeModbusTcpSlave Slave)> ConnectAsync()
     {
         var slave = new FakeModbusTcpSlave { Registers = new ushort[1300] };
@@ -298,7 +301,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input);
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input, Celsius);
 
         Assert.True(result.IsSuccess, result.Message);
         Assert.Equal([pdu], slave.ReceivedAdus.Select(a => HexFormatter.Format(a[7..])));
@@ -320,7 +323,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input);
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input, Celsius);
 
         Assert.Equal(ProfileWriteError.ReadOnly, result.Error);
         Assert.False(result.IsSent);
@@ -341,7 +344,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, "1");
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, "1", Celsius);
 
         Assert.Equal(ProfileWriteError.RegisterNotDefined, result.Error);
         Assert.Empty(slave.ReceivedAdus);
@@ -368,7 +371,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, address, addressBase, "1.5");
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, address, addressBase, "1.5", Celsius);
 
         Assert.True(result.IsSuccess, result.Message);
         Assert.Equal(223, result.Definition!.RegisterNumber);
@@ -399,7 +402,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input);
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input, Celsius);
 
         Assert.Equal(error, result.Error);
         Assert.False(result.IsSent);
@@ -417,7 +420,7 @@ public class ProfileWriteServiceTests
         await using var _ = slave;
         await using var __ = service;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input);
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, register, AddressBase.OneBased, input, Celsius);
 
         Assert.Equal(ProfileWriteError.WriteOnHold, result.Error);
         Assert.Equal(raw, result.Encoding!.Raw);
@@ -440,7 +443,7 @@ public class ProfileWriteServiceTests
         await using var __ = service;
         slave.ForcedExceptionCode = 0x02;
 
-        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5");
+        ProfileWriteResult result = await writer.WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5", Celsius);
 
         Assert.Equal(ProfileWriteError.CommunicationFailed, result.Error);
         Assert.True(result.IsSent);
@@ -453,7 +456,7 @@ public class ProfileWriteServiceTests
     public async Task NotConnected_IsCommunicationFailed()
     {
         await using var service = new ModbusService(new CommunicationLogger());
-        ProfileWriteResult result = await new ProfileWriteService(service).WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5");
+        ProfileWriteResult result = await new ProfileWriteService(service).WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5", Celsius);
         Assert.Equal(ProfileWriteError.CommunicationFailed, result.Error);
         Assert.Equal(ResultStatus.NotConnected, result.Transport!.Status);
     }
@@ -467,7 +470,7 @@ public class ProfileWriteServiceTests
         await using var service = new ModbusService(new CommunicationLogger());
         Assert.True(await service.ConnectAsync(new ModbusRtuTransport(new RtuSettings("COM_TEST", TimeoutMs: 1000), _ => channel)));
 
-        ProfileWriteResult result = await new ProfileWriteService(service).WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5");
+        ProfileWriteResult result = await new ProfileWriteService(service).WriteAsync(A6V, 1, 223, AddressBase.OneBased, "1.5", Celsius);
 
         Assert.True(result.IsSuccess, result.Message);
         Assert.Equal(["01 06 00 DE 00 0F A9 F4"], rtu.Requests.Select(HexFormatter.Format));

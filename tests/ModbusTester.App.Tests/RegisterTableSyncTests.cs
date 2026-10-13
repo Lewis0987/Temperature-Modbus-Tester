@@ -34,6 +34,13 @@ public class RegisterTableSyncTests
         vm.Write.Confirm = _ => confirm;
         await vm.ConnectCommand.ExecuteAsync(null);
         Assert.True(vm.IsConnected);
+        if (!profile.IsGeneric)
+        {
+            // System unit known before any profile write (Phase 4F-1.1); the tests' own reads replace this table.
+            await ReadAsync(vm, "401");
+            vm.Rows.Clear();
+            slave.ReceivedAdus.Clear();
+        }
         return (vm, slave);
     }
 
@@ -256,7 +263,7 @@ public class RegisterTableSyncTests
         await using var _ = vm;
         vm.Write.Confirm = _ => true;
         await vm.ConnectCommand.ExecuteAsync(null);
-        await ReadAsync(vm, "225");
+        await ReadAsync(vm, "401");                                                  // includes 223 and the System unit
         string[] before = Table(vm);
         silenceReads = true;
 

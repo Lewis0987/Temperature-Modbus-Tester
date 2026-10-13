@@ -27,6 +27,8 @@ public enum ProfileWriteError
     UnsupportedDataType,
     /// <summary>The value is valid, but writes to this register are held back (definition's WriteHoldReason).</summary>
     WriteOnHold,
+    /// <summary>The register's unit / range depends on a selector (e.g. System unit 401) whose state on this device is not known.</summary>
+    UnitContextUnknown,
     /// <summary>The value was sent, but the Modbus exchange failed (timeout, exception response, ...).</summary>
     CommunicationFailed,
 }

@@ -41,6 +41,12 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     private readonly Dictionary<string, string> _errors = [];
     private readonly Func<RtuSettings, ISerialChannel>? _serialChannelFactory;
     private readonly InputHistoryStore _historyStore;
+
+    /// <summary>
+    /// Unit selector states (System unit 401) read from the connected device, for profile writes of Reg 223.
+    /// Filled by profile reads and verified profile writes; cleared whenever the device may have changed.
+    /// </summary>
+    private readonly ProfileUnitContext _unitContext = new();
     private readonly List<FieldHistory> _histories = [];
     private CancellationTokenSource _operationCts = new();
 
@@ -92,6 +98,9 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     AddressBase IRegisterWriteHost.AddressBase => SelectedAddressBase?.Value ?? AddressBase.OneBased;
     DeviceProfile IRegisterWriteHost.Profile => SelectedDeviceProfile;
     CancellationToken IRegisterWriteHost.OperationToken => _operationCts.Token;
+
+    IReadOnlyDictionary<int, ushort> IRegisterWriteHost.UnitContext =>
+        ((IRegisterWriteHost)this).CurrentUnitId() is { IsValid: true } id ? _unitContext.For((byte)id.Value) : new Dictionary<int, ushort>();
 
     Parsed<int> IRegisterWriteHost.CurrentUnitId() => ConnectionType switch
     {
@@ -246,7 +255,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     partial void OnSelectedAddressBaseChanged(Option<AddressBase> value) { ValidateInputs(); Write?.Refresh(); }
 
     // The Write button follows the same connection state and busy flag as Read (no second source of truth).
-    partial void OnConnectionStateChanged(ConnectionState value) => Write?.RefreshCommands();
+    partial void OnConnectionStateChanged(ConnectionState value)
+    {
+        // Disconnect, connection lost, TCP ↔ RTU switch or a new connection (Connecting): the device may be another one.
+        if (value != ConnectionState.Connected && _unitContext.Clear())
+            Write?.Refresh();
+        Write?.RefreshCommands();
+    }
     partial void OnIsBusyChanged(bool value) => Write?.RefreshCommands();
     partial void OnStartAddressTextChanged(string value) => ValidateInputs();
     partial void OnQuantityTextChanged(string value) => ValidateInputs();
@@ -377,6 +392,9 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
                 DefaultScaleHistory.Record(defaultScale.Value.ToString(CultureInfo.InvariantCulture));
                 _lastRead = (read.Results, defaultScale.Value);
                 RebuildRows();
+                // A profile read that reached 401 tells the write path the device's current System unit.
+                if (!IsGenericProfile && _unitContext.Record(SelectedDeviceProfile, read.Results))
+                    Write?.Refresh();
             }
         }
         catch (OperationCanceledException)
@@ -463,7 +481,13 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
     /// </summary>
     void IRegisterWriteHost.ApplyVerifiedRead(ModbusResult readBack)
     {
-        if (!readBack.IsSuccess || _lastRead is not var (results, defaultScale))
+        if (!readBack.IsSuccess)
+            return;
+        // A verified profile write of a selector (e.g. 401 = Fahrenheit, read back 1) is the device's new state.
+        // (Generic writes never feed the context; switching back to a profile clears it anyway.)
+        if (!IsGenericProfile)
+            _unitContext.Record(SelectedDeviceProfile, [readBack]);
+        if (_lastRead is not var (results, defaultScale))
             return;
         ushort start = readBack.Request.PduAddress;
         var verified = new Dictionary<int, ushort>();
@@ -532,6 +556,7 @@ public sealed partial class MainViewModel : ObservableObject, INotifyDataErrorIn
         OnPropertyChanged(nameof(IsFunctionSelectable));
         ReadCommand.NotifyCanExecuteChanged();
         RebuildRows();
+        _unitContext.Clear();       // another profile: its selector registers / meanings may differ
         Write?.LoadProfile();
     }
 

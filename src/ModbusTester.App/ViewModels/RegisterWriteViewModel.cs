@@ -26,6 +26,8 @@ internal interface IRegisterWriteHost
     CancellationToken OperationToken { get; }
     /// <summary>A write was verified (read back equal to what was written): refresh the table rows that show those registers.</summary>
     void ApplyVerifiedRead(ModbusResult readBack);
+    /// <summary>Known unit selector states of the connected device (e.g. 401 → 1), see <see cref="ProfileUnitContext"/>.</summary>
+    IReadOnlyDictionary<int, ushort> UnitContext { get; }
 }
 
 public enum WriteStatus
@@ -119,9 +121,19 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
     public IReadOnlyList<string> StateOptions =>
         Definition is { DataType: DataType.Status } d ? [.. d.States.OrderBy(s => s.Key).Select(s => s.Value.Text)] : [];
 
+    /// <summary>
+    /// The definition a write uses, from the Core: Reg 223's unit / range follow the device's known System unit;
+    /// null (with <see cref="UnitContextError"/>) when that is not known.
+    /// </summary>
+    private (RegisterDefinition? Definition, string? Error) WriteDefinition =>
+        Definition is { } d ? ProfileWriteService.ResolveForWrite(_host.Profile, d, _host.UnitContext) : (null, null);
+
+    /// <summary>Why the selected register cannot be written yet (its unit selector, e.g. 401, is not known for this device).</summary>
+    public string? UnitContextError => WriteDefinition.Error;
+
     // Metadata shown as-is (display only; validation is the Core's).
-    public string UnitText => Definition?.Unit ?? "";
-    public string RangeText => Definition is { Min: { } min, Max: { } max } ? $"{Format(min)} ~ {Format(max)}" : "";
+    public string UnitText => WriteDefinition.Definition?.Unit ?? "";
+    public string RangeText => WriteDefinition.Definition is { Min: { } min, Max: { } max } ? $"{Format(min)} ~ {Format(max)}" : "";
     public string ScaleText => Definition is null || IsStatusRegister ? "" : Definition.Scale is { } s ? Format(s) : "-";
     public string? HoldReason => Definition?.WriteHoldReason;
     public bool IsOnHold => HoldReason is not null;
@@ -203,6 +215,10 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
             return;
         _prepared = null;
         PreviewEngineering = PreviewRaw = PreviewHex = PreviewPdu = PreviewQuantity = ValidationMessage = "";
+        // The unit context may have changed (read of 401, disconnect, ...): re-query the unit / range shown.
+        OnPropertyChanged(nameof(UnitText));
+        OnPropertyChanged(nameof(RangeText));
+        OnPropertyChanged(nameof(UnitContextError));
         if (IsProfileMode)
             PreviewProfile();
         else
@@ -232,6 +248,12 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
             SetStatus(WriteStatus.NotReady, "Select a register");
             return;
         }
+        if (UnitContextError is { } contextError)
+        {
+            ValidationMessage = contextError;
+            SetStatus(WriteStatus.ValidationError, "System unit unknown");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(ProfileInput))
         {
             SetStatus(d.WriteHoldReason is null ? WriteStatus.NotReady : WriteStatus.WriteOnHold,
@@ -239,10 +261,11 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
             return;
         }
 
-        ProfileWriteResult result = ProfileWriteService.Prepare(_host.Profile, PreviewUnitId, ProfileAddress(d), _host.AddressBase, ProfileInput);
+        ProfileWriteResult result = ProfileWriteService.Prepare(_host.Profile, PreviewUnitId, ProfileAddress(d), _host.AddressBase, ProfileInput,
+            _host.UnitContext);
         if (result.Encoding is { IsValid: true } encoding && result.Request is { } request)
         {
-            PreviewEngineering = IsStatusRegister ? ProfileInput!.Trim() : JoinUnit(Format(encoding.EngineeringValue!.Value), d.Unit);
+            PreviewEngineering = IsStatusRegister ? ProfileInput!.Trim() : JoinUnit(Format(encoding.EngineeringValue!.Value), result.Definition!.Unit);
             PreviewRaw = encoding.Raw!.Value.ToString(CultureInfo.InvariantCulture);
             PreviewHex = encoding.Raw.Value.ToString("X4", CultureInfo.InvariantCulture);
             PreviewPdu = $"0x{request.PduAddress:X4}";
@@ -359,11 +382,14 @@ public sealed partial class RegisterWriteViewModel : ObservableObject
         }
     }
 
-    /// <summary>Profile: the write goes through <see cref="ProfileWriteService"/> (which validates again, Core = last line of defence).</summary>
+    /// <summary>
+    /// Profile: the write goes through <see cref="ProfileWriteService"/> (which validates again with the unit context
+    /// as it is now – Core = last line of defence). <paramref name="definition"/> is the prepared one (unit already resolved).
+    /// </summary>
     private async Task WriteProfileAsync(RegisterDefinition definition, ModbusWriteRequest prepared)
     {
         ProfileWriteResult result = await new ProfileWriteService(_host.Service).WriteAsync(
-            _host.Profile, prepared.UnitId, prepared.StartAddress, prepared.AddressBase, ProfileInput, _host.OperationToken);
+            _host.Profile, prepared.UnitId, prepared.StartAddress, prepared.AddressBase, ProfileInput, _host.UnitContext, _host.OperationToken);
         if (result.Error == ProfileWriteError.WriteOnHold)
         {
             SetStatus(WriteStatus.WriteOnHold, "Write on hold");

@@ -81,7 +81,16 @@ public class RegisterWriteUiTests
             Assert.False(Named<TextBox>(window, "WriteAddress").IsVisible);
             Assert.Equal(7, Named<ComboBox>(window, "WriteRegister").Items.Count);
 
+            // 223 without a known System unit (nothing read yet): the Core's message, no unit, Write disabled
             vm.Write.SelectedRegister = vm.Write.WritableRegisters[0];
+            vm.Write.ValueText = "-2.5";
+            Pump(window);
+            Assert.Contains("read Register 401 first", Named<TextBlock>(window, "WriteValidationMessage").Text);
+            Assert.False(Named<TextBlock>(window, "WritePreview").IsVisible);
+            Assert.False(Named<Button>(window, "WriteButton").IsEnabled);
+
+            // 224 (fixed unit %) previews as before
+            vm.Write.SelectedRegister = vm.Write.WritableRegisters.Single(r => r.Definition.RegisterNumber == 224);
             vm.Write.ValueText = "-2.5";
             Pump(window);
             Assert.True(Named<TextBox>(window, "WriteValue").IsVisible);
