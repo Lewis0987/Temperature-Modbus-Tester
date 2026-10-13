@@ -107,4 +107,16 @@ public sealed record RegisterDefinition
     public IReadOnlyDictionary<ushort, RegisterState> States { get; init; } = new Dictionary<ushort, RegisterState>();
 
     public ushort PduAddress => (ushort)(RegisterNumber - 1);
+
+    /// <summary>
+    /// Registers the value occupies, derived from <see cref="DataType"/> (1 for 16-bit / Status, 2 for UInt32 / Int32 /
+    /// Float32) – it cannot be set, so a definition can never claim e.g. Float32 in one register.
+    /// </summary>
+    public int RegisterCount => RegisterDecoder.RegisterCount(DataType);
+
+    /// <summary>Last document register number of the value (= <see cref="RegisterNumber"/> for 16-bit).</summary>
+    public int LastRegisterNumber => RegisterNumber + RegisterCount - 1;
+
+    /// <summary>Byte arrangement of a 32-bit value over its two registers (per definition); ignored for 16-bit.</summary>
+    public Register32Order Order32 { get; init; } = Register32Order.ABCD;
 }

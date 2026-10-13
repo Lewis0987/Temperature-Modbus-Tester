@@ -17,26 +17,39 @@ public sealed record RegisterGroup(int FirstRegister, int Count)
 /// </summary>
 public static class ProfileReadPlanner
 {
-    /// <summary>Profile definitions with RegisterNumber ≤ <paramref name="upToRegister"/>, ascending.</summary>
+    /// <summary>
+    /// Profile definitions that lie completely within "up to <paramref name="upToRegister"/>", ascending: a 32-bit
+    /// value at 100 (registers 100–101) is included from 101 on – never half of it, and never read past the target.
+    /// </summary>
     public static IReadOnlyList<RegisterDefinition> Select(DeviceProfile profile, int upToRegister) =>
-        profile.Registers.Where(r => r.RegisterNumber <= upToRegister).OrderBy(r => r.RegisterNumber).ToArray();
+        profile.Registers.Where(r => r.LastRegisterNumber <= upToRegister).OrderBy(r => r.RegisterNumber).ToArray();
 
     /// <summary>Splits register numbers into runs of consecutive numbers, at most <paramref name="maxPerGroup"/> long.</summary>
-    public static IReadOnlyList<RegisterGroup> Group(IEnumerable<int> registerNumbers, int maxPerGroup = ModbusPdu.MaxReadRegisters)
+    public static IReadOnlyList<RegisterGroup> Group(IEnumerable<int> registerNumbers, int maxPerGroup = ModbusPdu.MaxReadRegisters) =>
+        Group(registerNumbers.Distinct().Select(n => new RegisterGroup(n, 1)), maxPerGroup);
+
+    /// <summary>
+    /// Joins register spans (one per definition: 1 register, or 2 for a 32-bit value) into runs of consecutive
+    /// registers of at most <paramref name="maxPerGroup"/>. A span is never split: if it does not fit, the run ends
+    /// before it and the span starts the next run (so both words of a 32-bit value are always in one request).
+    /// </summary>
+    public static IReadOnlyList<RegisterGroup> Group(IEnumerable<RegisterGroup> spans, int maxPerGroup = ModbusPdu.MaxReadRegisters)
     {
         var groups = new List<RegisterGroup>();
         int first = 0, count = 0;
-        foreach (int register in registerNumbers.Distinct().Order())
+        foreach (RegisterGroup span in spans.OrderBy(s => s.FirstRegister))
         {
-            if (count > 0 && register == first + count && count < maxPerGroup)
+            if (span.Count > maxPerGroup)
+                throw new ArgumentOutOfRangeException(nameof(spans), $"A value of {span.Count} registers exceeds {maxPerGroup} per request.");
+            if (count > 0 && span.FirstRegister == first + count && count + span.Count <= maxPerGroup)
             {
-                count++;
+                count += span.Count;
                 continue;
             }
             if (count > 0)
                 groups.Add(new RegisterGroup(first, count));
-            first = register;
-            count = 1;
+            first = span.FirstRegister;
+            count = span.Count;
         }
         if (count > 0)
             groups.Add(new RegisterGroup(first, count));
@@ -55,7 +68,7 @@ public static class ProfileReadPlanner
     {
         function = profile.RequiredReadFunction ?? function;
         int upToRegister = addressBase == AddressBase.OneBased ? address : address + 1;
-        IEnumerable<int> selected = Select(profile, upToRegister).Select(r => r.RegisterNumber);
+        IEnumerable<RegisterGroup> selected = Select(profile, upToRegister).Select(r => new RegisterGroup(r.RegisterNumber, r.RegisterCount));
         return Group(selected)
             .Select(g => new ModbusRequest(function, unitId,
                 addressBase == AddressBase.OneBased ? g.FirstRegister : g.FirstRegister - 1, (ushort)g.Count, addressBase))

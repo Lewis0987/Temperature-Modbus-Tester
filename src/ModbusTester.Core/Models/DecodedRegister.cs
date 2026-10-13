@@ -11,6 +11,10 @@ public enum RegisterQuality
     OutOfRange,
     /// <summary>Status register value that the document does not define.</summary>
     UnknownState,
+    /// <summary>Float32 NaN / ±Infinity: a valid bit pattern but not a usable engineering value (no range check).</summary>
+    InvalidValue,
+    /// <summary>Not all registers of the value were read (e.g. only the first word of a 32-bit value): no value.</summary>
+    Incomplete,
 }
 
 /// <summary>One register after decoding, either by a profile definition or generically (raw × manual scale).</summary>
@@ -19,7 +23,21 @@ public sealed record DecodedRegister
     /// <summary>User-facing address (as entered with the current Address Base).</summary>
     public required int Address { get; init; }
     public required ushort PduAddress { get; init; }
+
+    /// <summary>First (or only) register word as read. For 32-bit values see <see cref="Words"/> / <see cref="Bits32"/>.</summary>
     public required ushort Raw { get; init; }
+
+    /// <summary>Second register word of a 32-bit value (wire order); null for 16-bit values and incomplete 32-bit values.</summary>
+    public ushort? SecondWord { get; init; }
+
+    /// <summary>All register words of this value in wire order: 1 for 16-bit (or an incomplete 32-bit value), 2 for 32-bit.</summary>
+    public IReadOnlyList<ushort> Words => SecondWord is { } second ? [Raw, second] : [Raw];
+
+    /// <summary>The 32-bit pattern after the register order (A = most significant byte); null for 16-bit values.</summary>
+    public uint? Bits32 { get; init; }
+
+    /// <summary>Number of registers this value occupies on the wire.</summary>
+    public int RegisterCount => Words.Count;
 
     /// <summary>Null when the profile does not define this register (generic decoding with a manual scale).</summary>
     public RegisterDefinition? Definition { get; init; }
@@ -45,8 +63,11 @@ public sealed record DecodedRegister
     public string Description => Definition?.Description ?? "";
     public string ChineseDescription => Definition?.ChineseDescription ?? "";
     public string Unit => Definition?.Unit ?? "";
-    public string Hex => RegisterFormat.Hex(Raw);
-    public string Binary => RegisterFormat.Binary(Raw);
+    public string Hex => Bits32 is { } bits ? RegisterFormat.Hex32(bits) : RegisterFormat.Hex(Raw);
+    public string Binary => Bits32 is { } bits ? RegisterFormat.Binary32(bits) : RegisterFormat.Binary(Raw);
+
+    /// <summary>The raw words as read, e.g. "1234 5678" (wire order, before the 32-bit register order is applied).</summary>
+    public string RawWordsText => string.Join(" ", Words.Select(RegisterFormat.Hex));
 
     /// <summary>"0.01", or "-" when the document defines no scaling (status registers, CO2).</summary>
     public string ScaleText => Scale is { } scale ? RegisterFormat.Number(scale) : "-";
@@ -61,6 +82,10 @@ public static class RegisterFormat
 
     public static string Binary(ushort raw) =>
         Convert.ToString(raw, 2).PadLeft(16, '0').Insert(12, " ").Insert(8, " ").Insert(4, " ");
+
+    public static string Hex32(uint bits) => bits.ToString("X8");
+
+    public static string Binary32(uint bits) => $"{Binary((ushort)(bits >> 16))} {Binary((ushort)bits)}";
 
     public static string Number(double value) => value.ToString(CultureInfo.InvariantCulture);
 }

@@ -56,9 +56,34 @@ public static class RegisterService
             int address = ModbusAddress.Display(result.Request.StartAddress, i);
             var pdu = (ushort)(startPdu + i);
             ushort raw = result.Registers[i];
-            RegisterDefinition? definition = profile.Find(pdu);
-            rows.Add(definition is not null
-                ? RegisterDecoder.DecodeEngineering(address, pdu, raw, WithUnitContext(definition, profile, read))
+            RegisterDefinition? covering = profile.FindCovering(pdu);
+
+            if (covering is { RegisterCount: 2 })
+            {
+                RegisterDefinition definition = WithUnitContext(covering, profile, read);
+                if (covering.PduAddress == pdu)
+                {
+                    // First word: both words go to one decoder → one row. The second word may come from another
+                    // request of the same read; if it was not read at all the value is Incomplete (never guessed).
+                    var second = (ushort)(pdu + 1);
+                    if (read.TryGetValue(second, out ushort next))
+                    {
+                        rows.Add(RegisterDecoder.DecodeEngineering(address, pdu, [raw, next], definition));
+                        if (i + 1 < result.Registers.Count)
+                            i++;                                    // second word consumed here
+                    }
+                    else
+                        rows.Add(RegisterDecoder.DecodeEngineering(address, pdu, [raw], definition));
+                }
+                else if (!read.ContainsKey(covering.PduAddress))
+                    rows.Add(RegisterDecoder.DecodeEngineering(address, pdu, [raw], definition));   // second word only: Incomplete
+                // else: second word, already part of the row of its first word (other request of this read)
+                continue;
+            }
+
+            RegisterDefinition? single = profile.Find(pdu);
+            rows.Add(single is not null
+                ? RegisterDecoder.DecodeEngineering(address, pdu, raw, WithUnitContext(single, profile, read))
                 : RegisterDecoder.DecodeGeneric(address, pdu, raw, manualScaleFor(address)));
         }
         return rows;

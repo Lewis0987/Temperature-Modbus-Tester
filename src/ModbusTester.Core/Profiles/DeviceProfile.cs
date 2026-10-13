@@ -9,6 +9,8 @@ namespace ModbusTester.Core.Profiles;
 public sealed class DeviceProfile
 {
     private readonly Dictionary<ushort, RegisterDefinition> _byPduAddress;
+    /// <summary>Every PDU address a definition occupies (both words of a 32-bit value) → that definition.</summary>
+    private readonly Dictionary<ushort, RegisterDefinition> _coveringPdu = [];
 
     /// <param name="requiredReadFunction">Read function the device document prescribes for its register table; null = any.</param>
     public DeviceProfile(string name, string description, IEnumerable<RegisterDefinition> registers, ModbusFunction? requiredReadFunction = null)
@@ -18,6 +20,15 @@ public sealed class DeviceProfile
         Registers = registers.OrderBy(r => r.RegisterNumber).ToArray();
         RequiredReadFunction = requiredReadFunction;
         _byPduAddress = Registers.ToDictionary(r => r.PduAddress);
+        foreach (RegisterDefinition definition in Registers)
+            for (int i = 0; i < definition.RegisterCount; i++)
+            {
+                var pdu = (ushort)(definition.PduAddress + i);
+                if (!_coveringPdu.TryAdd(pdu, definition))
+                    throw new ArgumentException(
+                        $"Register {pdu + 1} is used by both register {_coveringPdu[pdu].RegisterNumber} and register {definition.RegisterNumber}.",
+                        nameof(registers));
+            }
     }
 
     public string Name { get; }
@@ -33,6 +44,9 @@ public sealed class DeviceProfile
 
     /// <summary>The definition for a 0-based PDU address (Register N = PDU N - 1), or null if the profile does not define it.</summary>
     public RegisterDefinition? Find(ushort pduAddress) => _byPduAddress.GetValueOrDefault(pduAddress);
+
+    /// <summary>The definition occupying <paramref name="pduAddress"/>, also when it is the second word of a 32-bit value.</summary>
+    public RegisterDefinition? FindCovering(ushort pduAddress) => _coveringPdu.GetValueOrDefault(pduAddress);
 
     public override string ToString() => Name;
 
